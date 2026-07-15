@@ -1,0 +1,120 @@
+:root {
+  color-scheme: light;
+
+  /* surface */
+  --canvas: #ffffff;
+  --canvas-subtle: #f6f8fa;
+  --canvas-inset: #eef1f4;
+  --border: #d1d9e0;
+  --border-muted: #e2e8ee;
+
+  /* text */
+  --fg-default: #1f2328;
+  --fg-muted: #59636e;
+  --fg-subtle: #818b98;
+  --fg-on-emphasis: #ffffff;
+
+  /* accents */
+  --accent: #0969da;
+  --accent-emphasis: #0550ae;
+  --accent-subtle: #ddf4ff;
+
+  --success: #1a7f37;
+  --success-subtle: #dafbe1;
+  --success-emphasis: #116329;
+
+  --danger: #cf222e;
+  --danger-subtle: #ffebe9;
+  --danger-emphasis: #a40e26;
+
+  --attention: #9a6700;
+  --attention-subtle: #fff8c5;
+
+  --neutral-subtle: #eef1f4;
+
+  /* severity scale — deliberately distinct from status colors above,
+     so "blocked" (red) never reads the same as "HIGH" (orange) */
+  --sev-critical: #cf222e;
+  --sev-critical-bg: #ffebe9;
+  --sev-high: #bc4c00;
+  --sev-high-bg: #fff1e5;
+  --sev-medium: #9a6700;
+  --sev-medium-bg: #fff8c5;
+  --sev-low: #0969da;
+  --sev-low-bg: #ddf4ff;
+  --sev-info: #59636e;
+  --sev-info-bg: #eef1f4;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+    Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono",
+    Consolas, "Liberation Mono", Menlo, monospace;
+
+  --radius: 6px;
+  --shadow-sm: 0 1px 0 rgba(31, 35, 40, 0.04);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas-subtle);
+  color: var(--fg-default);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.diff-line-add {
+  background: rgba(26, 127, 55, 0.08);
+}
+.diff-line-remove {
+  background: rgba(207, 34, 46, 0.08);
+}
+.diff-line-meta {
+  background: var(--canvas-inset);
+}
+.monaco-glyph {
+  width: 6px !important;
+  margin-left: 6px;
+  border-radius: 2px;
+}
+.monaco-glyph-critical { background: var(--sev-critical); }
+.monaco-glyph-high { background: var(--sev-high); }
+.monaco-glyph-medium { background: var(--sev-medium); }
+.monaco-glyph-low { background: var(--sev-low); }
+.monaco-glyph-info { background: var(--sev-info); }

@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Node / frontend
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.vite/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS / editor clutter
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+
+# Local logs / temp
+*.log
+tmp/
+temp/
+
+config.py
+github-app-private-key.pem
+review_agent.db
+knowledge_graph.json
+knowledge_graph_aakash1514_code-review-agent-test.json
