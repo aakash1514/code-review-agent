@@ -93,6 +93,46 @@ def create_job(repo: str, pr_number: int, commit_sha: str) -> None:
             ON CONFLICT(repo, pr_number) DO UPDATE SET latest_sha=excluded.latest_sha, updated_at=excluded.updated_at
         """, (repo, pr_number, commit_sha, now))
 
+def try_start_job(repo: str, pr_number: int, commit_sha: str) -> bool:
+    """
+    Guard used by the webhook route handler instead of calling create_job()
+    directly (fix 5.3, duplicate-delivery protection): returns False if a
+    job for this exact commit already exists with status
+    pending/running/complete — meaning the caller should skip re-running the
+    pipeline, since this is a GitHub webhook redelivery of an event already
+    being (or already) handled. Returns True if it's safe to proceed (either
+    a brand new commit, or the existing job for this commit previously
+    failed and is being retried).
+
+    On True, does the same INSERT OR REPLACE + pr_latest_sha update that
+    create_job() does, in the same connection/transaction as the status
+    check, so there's no window between "check" and "write" for a second
+    concurrent retry to slip through.
+
+    create_job() itself is left as-is above — still a reasonable tested
+    primitive on its own, this just wraps it with the check-before-write
+    guard the webhook handler actually needs.
+    """
+    now = time.time()
+    with _connect() as conn:
+        row = conn.execute("""
+            SELECT status FROM review_jobs WHERE repo = ? AND commit_sha = ?
+        """, (repo, commit_sha)).fetchone()
+        if row is not None and row["status"] in ("pending", "running", "complete"):
+            return False
+
+        conn.execute("""
+            INSERT OR REPLACE INTO review_jobs (repo, pr_number, commit_sha, status, created_at, updated_at)
+            VALUES (?, ?, ?, 'pending', ?, ?)
+        """, (repo, pr_number, commit_sha, now, now))
+
+        conn.execute("""
+            INSERT INTO pr_latest_sha (repo, pr_number, latest_sha, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(repo, pr_number) DO UPDATE SET latest_sha=excluded.latest_sha, updated_at=excluded.updated_at
+        """, (repo, pr_number, commit_sha, now))
+        return True
+
 
 def list_jobs(repo: str, limit: int = 20) -> list[dict]:
     """Most recent jobs for a repo, newest first — powers the dashboard's

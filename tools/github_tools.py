@@ -172,3 +172,21 @@ def get_pr(repo: str, pr_number: int, token: str | None = None) -> dict:
     )
     resp.raise_for_status()
     return resp.json()
+
+def get_repo_tree(repo: str, ref: str, token: str | None = None) -> list[dict]:
+    """
+    Recursive file listing at a given ref (branch name or commit SHA), via
+    GitHub's Git Trees API. Used by the push-to-default-branch knowledge-graph
+    rebuild (gap #6) to enumerate files without a local git clone — each
+    file's content is then fetched individually via get_full_file_content().
+    Only returns blobs (files), not tree entries (directories).
+    """
+    resp = requests.get(
+        f"{GITHUB_API_BASE}/repos/{repo}/git/trees/{ref}",
+        headers=_auth_headers(token),
+        params={"recursive": "1"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return [item for item in data.get("tree", []) if item.get("type") == "blob"]

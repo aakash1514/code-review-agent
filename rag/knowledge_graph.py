@@ -13,6 +13,7 @@ class FunctionNode:
     calls: list[str] = field(default_factory=list)
     called_by: list[str] = field(default_factory=list)
     imports: list[str] = field(default_factory=list)
+    class_name: str | None = None  # None for module-level functions
 
 
 def kg_path_for_repo(repo: str, base_dir: str = ".") -> str:
@@ -57,6 +58,41 @@ class KnowledgeGraph:
         for file_path in py_files:
             self._extract_calls(file_path, repo_path)
 
+    @staticmethod
+    def _iter_functions_with_class(tree: ast.AST):
+        """
+        Yields (function_node, enclosing_class_name_or_None) for every
+        function/async function def in the tree, tracking the innermost
+        enclosing class. This is what lets self.foo() calls be scoped to
+        the caller's own class instead of matching every function named
+        "foo" anywhere in the repo — see the name-collision note on
+        _extract_calls below.
+        """
+        results = []
+
+        class _Visitor(ast.NodeVisitor):
+            def __init__(self):
+                self.class_stack: list[str] = []
+
+            def visit_ClassDef(self, node):
+                self.class_stack.append(node.name)
+                self.generic_visit(node)
+                self.class_stack.pop()
+
+            def _visit_fn(self, node):
+                current_class = self.class_stack[-1] if self.class_stack else None
+                results.append((node, current_class))
+                self.generic_visit(node)
+
+            def visit_FunctionDef(self, node):
+                self._visit_fn(node)
+
+            def visit_AsyncFunctionDef(self, node):
+                self._visit_fn(node)
+
+        _Visitor().visit(tree)
+        return results
+
     def _register_functions(self, file_path: str, repo_path: str) -> None:
         rel_path = os.path.relpath(file_path, repo_path).replace(os.sep, "/")
         try:
@@ -65,11 +101,22 @@ class KnowledgeGraph:
         except (SyntaxError, UnicodeDecodeError):
             return
 
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                fn_key = f"{rel_path}::{node.name}"
-                self.nodes[fn_key] = FunctionNode(fn_key=fn_key, name=node.name, file_path=rel_path)
-                self._name_index.setdefault(node.name, []).append(fn_key)
+        for node, class_name in self._iter_functions_with_class(tree):
+            fn_key = f"{rel_path}::{node.name}"
+            # NOTE — known, still-open caveat, distinct from the call-scoping
+            # fix below: fn_key is file+name only, not file+class+name. Two
+            # DIFFERENT classes with a same-named method in the SAME FILE
+            # will collide here and silently overwrite each other in
+            # self.nodes. Not fixed in this pass — changing fn_key's format
+            # would also require updating rag/retriever.py's
+            # find_fn_key_by_name_and_file (and re-indexing), which is a
+            # wider-blast-radius change than the call-resolution accuracy
+            # fix this pass is scoped to. Flagging explicitly rather than
+            # silently leaving it undocumented.
+            self.nodes[fn_key] = FunctionNode(
+                fn_key=fn_key, name=node.name, file_path=rel_path, class_name=class_name,
+            )
+            self._name_index.setdefault(node.name, []).append(fn_key)
 
     def _extract_calls(self, file_path: str, repo_path: str) -> None:
         rel_path = os.path.relpath(file_path, repo_path).replace(os.sep, "/")
@@ -81,31 +128,56 @@ class KnowledgeGraph:
 
         imports = [n.names[0].name for n in ast.walk(tree) if isinstance(n, ast.Import)]
 
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
+        for node, _class_name in self._iter_functions_with_class(tree):
             caller_key = f"{rel_path}::{node.name}"
             if caller_key not in self.nodes:
                 continue
-            self.nodes[caller_key].imports = imports
+            caller_node = self.nodes[caller_key]
+            caller_node.imports = imports
+            caller_class = caller_node.class_name
 
             for sub in ast.walk(node):
                 if not isinstance(sub, ast.Call):
                     continue
 
                 called_name = None
+                is_self_call = False
                 if isinstance(sub.func, ast.Name):
                     called_name = sub.func.id
                 elif isinstance(sub.func, ast.Attribute):
                     called_name = sub.func.attr
+                    if isinstance(sub.func.value, ast.Name) and sub.func.value.id == "self":
+                        is_self_call = True
 
                 if called_name is None:
                     continue
 
-                for candidate_key in self._name_index.get(called_name, []):
+                candidates = self._name_index.get(called_name, [])
+
+                # Name-collision fix: without this, self.save() would link
+                # to EVERY function named "save" anywhere in the repo,
+                # including unrelated classes' save() methods. Scope to the
+                # caller's own class when possible. Falls back to the old
+                # unscoped match if no same-class candidate exists (e.g. an
+                # inherited method defined on a base class elsewhere) — a
+                # missing edge is safer than a wrong one, but we'd still
+                # rather show something than nothing when we can't
+                # disambiguate further. Calls through other objects
+                # (obj.method(), not self.method()) stay unscoped, same as
+                # before — genuinely needs type inference to fix properly,
+                # out of scope here.
+                if is_self_call and caller_class is not None:
+                    same_class = [
+                        key for key in candidates
+                        if self.nodes[key].class_name == caller_class
+                    ]
+                    if same_class:
+                        candidates = same_class
+
+                for candidate_key in candidates:
                     if candidate_key == caller_key:
                         continue
-                    self.nodes[caller_key].calls.append(candidate_key)
+                    caller_node.calls.append(candidate_key)
                     self.nodes[candidate_key].called_by.append(caller_key)
 
     def get_call_chain(self, fn_key: str, depth: int = 3) -> list[str]:

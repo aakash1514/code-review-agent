@@ -1,0 +1,1762 @@
+{
+  "agents/architecture_agent.py::_snippet_matches_security_pattern": {
+    "fn_key": "agents/architecture_agent.py::_snippet_matches_security_pattern",
+    "name": "_snippet_matches_security_pattern",
+    "file_path": "agents/architecture_agent.py",
+    "calls": [
+      "tools/code_tools.py::detect_sql_patterns",
+      "rag/indexer.py::search"
+    ],
+    "called_by": [
+      "agents/architecture_agent.py::_strip_security_leaks"
+    ],
+    "imports": [
+      "json",
+      "re",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/architecture_agent.py::_format_complexity": {
+    "fn_key": "agents/architecture_agent.py::_format_complexity",
+    "name": "_format_complexity",
+    "file_path": "agents/architecture_agent.py",
+    "calls": [],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent"
+    ],
+    "imports": [
+      "json",
+      "re",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/architecture_agent.py::_parse_findings_json": {
+    "fn_key": "agents/architecture_agent.py::_parse_findings_json",
+    "name": "_parse_findings_json",
+    "file_path": "agents/architecture_agent.py",
+    "calls": [],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent"
+    ],
+    "imports": [
+      "json",
+      "re",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/architecture_agent.py::_strip_security_leaks": {
+    "fn_key": "agents/architecture_agent.py::_strip_security_leaks",
+    "name": "_strip_security_leaks",
+    "file_path": "agents/architecture_agent.py",
+    "calls": [
+      "agents/architecture_agent.py::_snippet_matches_security_pattern"
+    ],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent"
+    ],
+    "imports": [
+      "json",
+      "re",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/architecture_agent.py::_cap_routine_edge_case_severity": {
+    "fn_key": "agents/architecture_agent.py::_cap_routine_edge_case_severity",
+    "name": "_cap_routine_edge_case_severity",
+    "file_path": "agents/architecture_agent.py",
+    "calls": [],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent"
+    ],
+    "imports": [
+      "json",
+      "re",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/architecture_agent.py::run_architecture_agent": {
+    "fn_key": "agents/architecture_agent.py::run_architecture_agent",
+    "name": "run_architecture_agent",
+    "file_path": "agents/architecture_agent.py",
+    "calls": [
+      "tools/code_tools.py::calculate_complexity",
+      "agents/architecture_agent.py::_parse_findings_json",
+      "agents/documentation_agent.py::_parse_findings_json",
+      "agents/security_agent.py::_parse_findings_json",
+      "agents/test_coverage_agent.py::_parse_findings_json",
+      "agents/architecture_agent.py::_strip_security_leaks",
+      "agents/architecture_agent.py::_cap_routine_edge_case_severity",
+      "tools/code_tools.py::strip_diff_to_source",
+      "tools/model_client.py::reason",
+      "agents/architecture_agent.py::_format_complexity",
+      "tools/model_client.py::reason",
+      "agents/architecture_agent.py::_parse_findings_json",
+      "agents/documentation_agent.py::_parse_findings_json",
+      "agents/security_agent.py::_parse_findings_json",
+      "agents/test_coverage_agent.py::_parse_findings_json"
+    ],
+    "called_by": [],
+    "imports": [
+      "json",
+      "re",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/documentation_agent.py::_format_functions": {
+    "fn_key": "agents/documentation_agent.py::_format_functions",
+    "name": "_format_functions",
+    "file_path": "agents/documentation_agent.py",
+    "calls": [],
+    "called_by": [
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent"
+    ],
+    "imports": [
+      "json",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/documentation_agent.py::_parse_findings_json": {
+    "fn_key": "agents/documentation_agent.py::_parse_findings_json",
+    "name": "_parse_findings_json",
+    "file_path": "agents/documentation_agent.py",
+    "calls": [],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent"
+    ],
+    "imports": [
+      "json",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/documentation_agent.py::run_documentation_agent": {
+    "fn_key": "agents/documentation_agent.py::run_documentation_agent",
+    "name": "run_documentation_agent",
+    "file_path": "agents/documentation_agent.py",
+    "calls": [
+      "tools/code_tools.py::extract_functions",
+      "agents/architecture_agent.py::_parse_findings_json",
+      "agents/documentation_agent.py::_parse_findings_json",
+      "agents/security_agent.py::_parse_findings_json",
+      "agents/test_coverage_agent.py::_parse_findings_json",
+      "tools/code_tools.py::strip_diff_to_source",
+      "tools/model_client.py::reason",
+      "agents/documentation_agent.py::_format_functions",
+      "agents/test_coverage_agent.py::_format_functions",
+      "tools/model_client.py::reason",
+      "agents/architecture_agent.py::_parse_findings_json",
+      "agents/documentation_agent.py::_parse_findings_json",
+      "agents/security_agent.py::_parse_findings_json",
+      "agents/test_coverage_agent.py::_parse_findings_json"
+    ],
+    "called_by": [],
+    "imports": [
+      "json",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/security_agent.py::_format_sql_findings": {
+    "fn_key": "agents/security_agent.py::_format_sql_findings",
+    "name": "_format_sql_findings",
+    "file_path": "agents/security_agent.py",
+    "calls": [],
+    "called_by": [
+      "agents/security_agent.py::run_security_agent"
+    ],
+    "imports": [
+      "json",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/security_agent.py::_parse_findings_json": {
+    "fn_key": "agents/security_agent.py::_parse_findings_json",
+    "name": "_parse_findings_json",
+    "file_path": "agents/security_agent.py",
+    "calls": [],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent"
+    ],
+    "imports": [
+      "json",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/security_agent.py::run_security_agent": {
+    "fn_key": "agents/security_agent.py::run_security_agent",
+    "name": "run_security_agent",
+    "file_path": "agents/security_agent.py",
+    "calls": [
+      "tools/code_tools.py::detect_sql_patterns",
+      "agents/architecture_agent.py::_parse_findings_json",
+      "agents/documentation_agent.py::_parse_findings_json",
+      "agents/security_agent.py::_parse_findings_json",
+      "agents/test_coverage_agent.py::_parse_findings_json",
+      "tools/model_client.py::reason",
+      "agents/security_agent.py::_format_sql_findings",
+      "tools/model_client.py::reason",
+      "agents/architecture_agent.py::_parse_findings_json",
+      "agents/documentation_agent.py::_parse_findings_json",
+      "agents/security_agent.py::_parse_findings_json",
+      "agents/test_coverage_agent.py::_parse_findings_json"
+    ],
+    "called_by": [],
+    "imports": [
+      "json",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/test_coverage_agent.py::_format_functions": {
+    "fn_key": "agents/test_coverage_agent.py::_format_functions",
+    "name": "_format_functions",
+    "file_path": "agents/test_coverage_agent.py",
+    "calls": [],
+    "called_by": [
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent"
+    ],
+    "imports": [
+      "json",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/test_coverage_agent.py::_parse_findings_json": {
+    "fn_key": "agents/test_coverage_agent.py::_parse_findings_json",
+    "name": "_parse_findings_json",
+    "file_path": "agents/test_coverage_agent.py",
+    "calls": [],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent"
+    ],
+    "imports": [
+      "json",
+      "time"
+    ],
+    "class_name": null
+  },
+  "agents/test_coverage_agent.py::run_test_coverage_agent": {
+    "fn_key": "agents/test_coverage_agent.py::run_test_coverage_agent",
+    "name": "run_test_coverage_agent",
+    "file_path": "agents/test_coverage_agent.py",
+    "calls": [
+      "tools/code_tools.py::extract_functions",
+      "agents/architecture_agent.py::_parse_findings_json",
+      "agents/documentation_agent.py::_parse_findings_json",
+      "agents/security_agent.py::_parse_findings_json",
+      "agents/test_coverage_agent.py::_parse_findings_json",
+      "tools/code_tools.py::strip_diff_to_source",
+      "tools/model_client.py::reason",
+      "agents/documentation_agent.py::_format_functions",
+      "agents/test_coverage_agent.py::_format_functions",
+      "tools/model_client.py::reason",
+      "agents/architecture_agent.py::_parse_findings_json",
+      "agents/documentation_agent.py::_parse_findings_json",
+      "agents/security_agent.py::_parse_findings_json",
+      "agents/test_coverage_agent.py::_parse_findings_json"
+    ],
+    "called_by": [],
+    "imports": [
+      "json",
+      "time"
+    ],
+    "class_name": null
+  },
+  "api/dashboard.py::list_reviews": {
+    "fn_key": "api/dashboard.py::list_reviews",
+    "name": "list_reviews",
+    "file_path": "api/dashboard.py",
+    "calls": [
+      "pipeline/job_store.py::list_jobs"
+    ],
+    "called_by": [],
+    "imports": [
+      "json"
+    ],
+    "class_name": null
+  },
+  "api/dashboard.py::get_review": {
+    "fn_key": "api/dashboard.py::get_review",
+    "name": "get_review",
+    "file_path": "api/dashboard.py",
+    "calls": [
+      "pipeline/job_store.py::get_job"
+    ],
+    "called_by": [],
+    "imports": [
+      "json"
+    ],
+    "class_name": null
+  },
+  "api/dashboard.py::get_review_files": {
+    "fn_key": "api/dashboard.py::get_review_files",
+    "name": "get_review_files",
+    "file_path": "api/dashboard.py",
+    "calls": [
+      "pipeline/job_store.py::get_job",
+      "tools/github_tools.py::get_installation_token",
+      "tools/github_tools.py::get_pr",
+      "tools/github_tools.py::get_pr_files",
+      "tools/github_tools.py::get_full_file_content",
+      "tools/github_tools.py::get_full_file_content"
+    ],
+    "called_by": [],
+    "imports": [
+      "json"
+    ],
+    "class_name": null
+  },
+  "api/dashboard.py::approve_review": {
+    "fn_key": "api/dashboard.py::approve_review",
+    "name": "approve_review",
+    "file_path": "api/dashboard.py",
+    "calls": [
+      "pipeline/job_store.py::get_job"
+    ],
+    "called_by": [],
+    "imports": [
+      "json"
+    ],
+    "class_name": null
+  },
+  "api/dashboard.py::block_review": {
+    "fn_key": "api/dashboard.py::block_review",
+    "name": "block_review",
+    "file_path": "api/dashboard.py",
+    "calls": [
+      "pipeline/job_store.py::get_job"
+    ],
+    "called_by": [],
+    "imports": [
+      "json"
+    ],
+    "class_name": null
+  },
+  "api/dashboard.py::get_graph": {
+    "fn_key": "api/dashboard.py::get_graph",
+    "name": "get_graph",
+    "file_path": "api/dashboard.py",
+    "calls": [
+      "rag/knowledge_graph.py::load",
+      "rag/knowledge_graph.py::kg_path_for_repo"
+    ],
+    "called_by": [],
+    "imports": [
+      "json"
+    ],
+    "class_name": null
+  },
+  "api/webhook.py::lifespan": {
+    "fn_key": "api/webhook.py::lifespan",
+    "name": "lifespan",
+    "file_path": "api/webhook.py",
+    "calls": [
+      "pipeline/job_store.py::init_db",
+      "pipeline/job_store.py::sweep_stuck_jobs"
+    ],
+    "called_by": [],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": null
+  },
+  "api/webhook.py::_verify_signature": {
+    "fn_key": "api/webhook.py::_verify_signature",
+    "name": "_verify_signature",
+    "file_path": "api/webhook.py",
+    "calls": [],
+    "called_by": [
+      "api/webhook.py::github_webhook"
+    ],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": null
+  },
+  "api/webhook.py::_load_retriever": {
+    "fn_key": "api/webhook.py::_load_retriever",
+    "name": "_load_retriever",
+    "file_path": "api/webhook.py",
+    "calls": [
+      "rag/knowledge_graph.py::load",
+      "rag/knowledge_graph.py::kg_path_for_repo"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": null
+  },
+  "api/webhook.py::reviews_ws": {
+    "fn_key": "api/webhook.py::reviews_ws",
+    "name": "reviews_ws",
+    "file_path": "api/webhook.py",
+    "calls": [
+      "api/ws_manager.py::connect",
+      "api/ws_manager.py::disconnect"
+    ],
+    "called_by": [],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": null
+  },
+  "api/webhook.py::github_webhook": {
+    "fn_key": "api/webhook.py::github_webhook",
+    "name": "github_webhook",
+    "file_path": "api/webhook.py",
+    "calls": [
+      "pipeline/job_store.py::try_start_job",
+      "api/webhook.py::_verify_signature"
+    ],
+    "called_by": [],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": null
+  },
+  "api/webhook.py::run_review_pipeline": {
+    "fn_key": "api/webhook.py::run_review_pipeline",
+    "name": "run_review_pipeline",
+    "file_path": "api/webhook.py",
+    "calls": [
+      "pipeline/job_store.py::update_status",
+      "api/ws_manager.py::broadcast",
+      "tools/github_tools.py::get_installation_token",
+      "tools/github_tools.py::get_pr_files",
+      "api/webhook.py::_load_retriever",
+      "pipeline/synthesizer.py::build_review_report",
+      "pipeline/synthesizer.py::synthesize_markdown",
+      "pipeline/job_store.py::save_result",
+      "pipeline/job_store.py::is_stale_sha",
+      "pipeline/hitl_gate.py::evaluate_hitl_gate",
+      "tools/github_tools.py::post_pr_review",
+      "tools/github_tools.py::set_commit_status",
+      "tools/github_tools.py::set_commit_status",
+      "api/ws_manager.py::broadcast",
+      "rag/retriever.py::retrieve_for_diff",
+      "rag/retriever.py::build_agent_context_string",
+      "tools/github_tools.py::get_pr_diff",
+      "api/ws_manager.py::broadcast",
+      "pipeline/job_store.py::update_status",
+      "api/ws_manager.py::broadcast",
+      "pipeline/job_store.py::update_status",
+      "api/ws_manager.py::broadcast",
+      "api/ws_manager.py::broadcast",
+      "pipeline/runner.py::run_agents_parallel",
+      "api/ws_manager.py::broadcast",
+      "api/ws_manager.py::broadcast",
+      "tools/github_tools.py::get_installation_token",
+      "tools/github_tools.py::set_commit_status",
+      "tools/code_tools.py::extract_functions",
+      "tools/code_tools.py::strip_diff_to_source"
+    ],
+    "called_by": [],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": null
+  },
+  "api/webhook.py::_on_agent_complete": {
+    "fn_key": "api/webhook.py::_on_agent_complete",
+    "name": "_on_agent_complete",
+    "file_path": "api/webhook.py",
+    "calls": [
+      "api/ws_manager.py::broadcast"
+    ],
+    "called_by": [],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": null
+  },
+  "api/ws_manager.py::__init__": {
+    "fn_key": "api/ws_manager.py::__init__",
+    "name": "__init__",
+    "file_path": "api/ws_manager.py",
+    "calls": [],
+    "called_by": [],
+    "imports": [
+      "asyncio",
+      "json"
+    ],
+    "class_name": "ConnectionManager"
+  },
+  "api/ws_manager.py::connect": {
+    "fn_key": "api/ws_manager.py::connect",
+    "name": "connect",
+    "file_path": "api/ws_manager.py",
+    "calls": [],
+    "called_by": [
+      "api/webhook.py::reviews_ws",
+      "pipeline/job_store.py::_connect"
+    ],
+    "imports": [
+      "asyncio",
+      "json"
+    ],
+    "class_name": "ConnectionManager"
+  },
+  "api/ws_manager.py::disconnect": {
+    "fn_key": "api/ws_manager.py::disconnect",
+    "name": "disconnect",
+    "file_path": "api/ws_manager.py",
+    "calls": [],
+    "called_by": [
+      "api/webhook.py::reviews_ws"
+    ],
+    "imports": [
+      "asyncio",
+      "json"
+    ],
+    "class_name": "ConnectionManager"
+  },
+  "api/ws_manager.py::broadcast": {
+    "fn_key": "api/ws_manager.py::broadcast",
+    "name": "broadcast",
+    "file_path": "api/ws_manager.py",
+    "calls": [],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::_on_agent_complete"
+    ],
+    "imports": [
+      "asyncio",
+      "json"
+    ],
+    "class_name": "ConnectionManager"
+  },
+  "models/findings.py::dedup_key": {
+    "fn_key": "models/findings.py::dedup_key",
+    "name": "dedup_key",
+    "file_path": "models/findings.py",
+    "calls": [],
+    "called_by": [
+      "pipeline/synthesizer.py::deduplicate_findings"
+    ],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": "Finding"
+  },
+  "models/findings.py::recompute_counts": {
+    "fn_key": "models/findings.py::recompute_counts",
+    "name": "recompute_counts",
+    "file_path": "models/findings.py",
+    "calls": [],
+    "called_by": [
+      "pipeline/synthesizer.py::build_review_report"
+    ],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": "ReviewReport"
+  },
+  "pipeline/hitl_gate.py::evaluate_hitl_gate": {
+    "fn_key": "pipeline/hitl_gate.py::evaluate_hitl_gate",
+    "name": "evaluate_hitl_gate",
+    "file_path": "pipeline/hitl_gate.py",
+    "calls": [],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [],
+    "class_name": null
+  },
+  "pipeline/job_store.py::_db_path": {
+    "fn_key": "pipeline/job_store.py::_db_path",
+    "name": "_db_path",
+    "file_path": "pipeline/job_store.py",
+    "calls": [],
+    "called_by": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::_connect": {
+    "fn_key": "pipeline/job_store.py::_connect",
+    "name": "_connect",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "api/ws_manager.py::connect",
+      "pipeline/job_store.py::_db_path"
+    ],
+    "called_by": [
+      "pipeline/job_store.py::init_db",
+      "pipeline/job_store.py::create_job",
+      "pipeline/job_store.py::try_start_job",
+      "pipeline/job_store.py::list_jobs",
+      "pipeline/job_store.py::update_status",
+      "pipeline/job_store.py::save_result",
+      "pipeline/job_store.py::get_job",
+      "pipeline/job_store.py::is_stale_sha",
+      "pipeline/job_store.py::sweep_stuck_jobs"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::init_db": {
+    "fn_key": "pipeline/job_store.py::init_db",
+    "name": "init_db",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "called_by": [
+      "api/webhook.py::lifespan"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::create_job": {
+    "fn_key": "pipeline/job_store.py::create_job",
+    "name": "create_job",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "called_by": [],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::try_start_job": {
+    "fn_key": "pipeline/job_store.py::try_start_job",
+    "name": "try_start_job",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "called_by": [
+      "api/webhook.py::github_webhook"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::list_jobs": {
+    "fn_key": "pipeline/job_store.py::list_jobs",
+    "name": "list_jobs",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "called_by": [
+      "api/dashboard.py::list_reviews"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::update_status": {
+    "fn_key": "pipeline/job_store.py::update_status",
+    "name": "update_status",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::save_result": {
+    "fn_key": "pipeline/job_store.py::save_result",
+    "name": "save_result",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::get_job": {
+    "fn_key": "pipeline/job_store.py::get_job",
+    "name": "get_job",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "called_by": [
+      "api/dashboard.py::get_review",
+      "api/dashboard.py::get_review_files",
+      "api/dashboard.py::approve_review",
+      "api/dashboard.py::block_review"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::is_stale_sha": {
+    "fn_key": "pipeline/job_store.py::is_stale_sha",
+    "name": "is_stale_sha",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/job_store.py::sweep_stuck_jobs": {
+    "fn_key": "pipeline/job_store.py::sweep_stuck_jobs",
+    "name": "sweep_stuck_jobs",
+    "file_path": "pipeline/job_store.py",
+    "calls": [
+      "pipeline/job_store.py::_connect"
+    ],
+    "called_by": [
+      "api/webhook.py::lifespan"
+    ],
+    "imports": [
+      "json",
+      "sqlite3",
+      "time"
+    ],
+    "class_name": null
+  },
+  "pipeline/runner.py::run_agents_parallel": {
+    "fn_key": "pipeline/runner.py::run_agents_parallel",
+    "name": "run_agents_parallel",
+    "file_path": "pipeline/runner.py",
+    "calls": [
+      "pipeline/runner.py::_run_one"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "asyncio"
+    ],
+    "class_name": null
+  },
+  "pipeline/runner.py::_run_one": {
+    "fn_key": "pipeline/runner.py::_run_one",
+    "name": "_run_one",
+    "file_path": "pipeline/runner.py",
+    "calls": [],
+    "called_by": [
+      "pipeline/runner.py::run_agents_parallel"
+    ],
+    "imports": [
+      "asyncio"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::deduplicate_findings": {
+    "fn_key": "pipeline/synthesizer.py::deduplicate_findings",
+    "name": "deduplicate_findings",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [
+      "models/findings.py::dedup_key"
+    ],
+    "called_by": [
+      "pipeline/synthesizer.py::build_review_report"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::_ranges_overlap": {
+    "fn_key": "pipeline/synthesizer.py::_ranges_overlap",
+    "name": "_ranges_overlap",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [],
+    "called_by": [
+      "pipeline/synthesizer.py::group_related_findings"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::_mentioned_function_name": {
+    "fn_key": "pipeline/synthesizer.py::_mentioned_function_name",
+    "name": "_mentioned_function_name",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [
+      "rag/indexer.py::search"
+    ],
+    "called_by": [
+      "pipeline/synthesizer.py::group_related_findings"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::group_related_findings": {
+    "fn_key": "pipeline/synthesizer.py::group_related_findings",
+    "name": "group_related_findings",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [
+      "tools/code_tools.py::strip_diff_to_source",
+      "tools/code_tools.py::extract_functions",
+      "pipeline/synthesizer.py::_mentioned_function_name",
+      "pipeline/synthesizer.py::_ranges_overlap"
+    ],
+    "called_by": [
+      "pipeline/synthesizer.py::_format_findings_for_prompt"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::rank_findings": {
+    "fn_key": "pipeline/synthesizer.py::rank_findings",
+    "name": "rank_findings",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [],
+    "called_by": [
+      "pipeline/synthesizer.py::build_review_report"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::build_review_report": {
+    "fn_key": "pipeline/synthesizer.py::build_review_report",
+    "name": "build_review_report",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [
+      "pipeline/synthesizer.py::deduplicate_findings",
+      "pipeline/synthesizer.py::rank_findings",
+      "models/findings.py::recompute_counts"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::_format_single_finding": {
+    "fn_key": "pipeline/synthesizer.py::_format_single_finding",
+    "name": "_format_single_finding",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [],
+    "called_by": [
+      "pipeline/synthesizer.py::_format_findings_for_prompt",
+      "pipeline/synthesizer.py::_format_findings_for_prompt",
+      "pipeline/synthesizer.py::_format_findings_for_prompt"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::_format_findings_for_prompt": {
+    "fn_key": "pipeline/synthesizer.py::_format_findings_for_prompt",
+    "name": "_format_findings_for_prompt",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [
+      "pipeline/synthesizer.py::group_related_findings",
+      "pipeline/synthesizer.py::_format_single_finding",
+      "pipeline/synthesizer.py::_format_single_finding",
+      "pipeline/synthesizer.py::_format_single_finding"
+    ],
+    "called_by": [
+      "pipeline/synthesizer.py::synthesize_markdown"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::_deterministic_fallback_markdown": {
+    "fn_key": "pipeline/synthesizer.py::_deterministic_fallback_markdown",
+    "name": "_deterministic_fallback_markdown",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [],
+    "called_by": [
+      "pipeline/synthesizer.py::synthesize_markdown",
+      "pipeline/synthesizer.py::synthesize_markdown"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "pipeline/synthesizer.py::synthesize_markdown": {
+    "fn_key": "pipeline/synthesizer.py::synthesize_markdown",
+    "name": "synthesize_markdown",
+    "file_path": "pipeline/synthesizer.py",
+    "calls": [
+      "pipeline/synthesizer.py::_format_findings_for_prompt",
+      "pipeline/synthesizer.py::_deterministic_fallback_markdown",
+      "pipeline/synthesizer.py::_deterministic_fallback_markdown"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "re",
+      "time",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "rag/chunker.py::__post_init__": {
+    "fn_key": "rag/chunker.py::__post_init__",
+    "name": "__post_init__",
+    "file_path": "rag/chunker.py",
+    "calls": [],
+    "called_by": [],
+    "imports": [
+      "ast"
+    ],
+    "class_name": "CodeChunk"
+  },
+  "rag/chunker.py::chunk_python_file": {
+    "fn_key": "rag/chunker.py::chunk_python_file",
+    "name": "chunk_python_file",
+    "file_path": "rag/chunker.py",
+    "calls": [
+      "rag/chunker.py::_is_top_level"
+    ],
+    "called_by": [
+      "rag/chunker.py::chunk_file"
+    ],
+    "imports": [
+      "ast"
+    ],
+    "class_name": null
+  },
+  "rag/chunker.py::chunk_non_python_file": {
+    "fn_key": "rag/chunker.py::chunk_non_python_file",
+    "name": "chunk_non_python_file",
+    "file_path": "rag/chunker.py",
+    "calls": [],
+    "called_by": [
+      "rag/chunker.py::chunk_file"
+    ],
+    "imports": [
+      "ast"
+    ],
+    "class_name": null
+  },
+  "rag/chunker.py::_is_top_level": {
+    "fn_key": "rag/chunker.py::_is_top_level",
+    "name": "_is_top_level",
+    "file_path": "rag/chunker.py",
+    "calls": [],
+    "called_by": [
+      "rag/chunker.py::chunk_python_file"
+    ],
+    "imports": [
+      "ast"
+    ],
+    "class_name": null
+  },
+  "rag/chunker.py::chunk_file": {
+    "fn_key": "rag/chunker.py::chunk_file",
+    "name": "chunk_file",
+    "file_path": "rag/chunker.py",
+    "calls": [
+      "rag/chunker.py::chunk_non_python_file",
+      "rag/chunker.py::chunk_python_file"
+    ],
+    "called_by": [
+      "scripts/index_repo.py::main"
+    ],
+    "imports": [
+      "ast"
+    ],
+    "class_name": null
+  },
+  "rag/indexer.py::_stable_point_id": {
+    "fn_key": "rag/indexer.py::_stable_point_id",
+    "name": "_stable_point_id",
+    "file_path": "rag/indexer.py",
+    "calls": [],
+    "called_by": [
+      "rag/indexer.py::index_chunks"
+    ],
+    "imports": [
+      "time",
+      "hashlib",
+      "numpy"
+    ],
+    "class_name": null
+  },
+  "rag/indexer.py::__init__": {
+    "fn_key": "rag/indexer.py::__init__",
+    "name": "__init__",
+    "file_path": "rag/indexer.py",
+    "calls": [],
+    "called_by": [],
+    "imports": [
+      "time",
+      "hashlib",
+      "numpy"
+    ],
+    "class_name": "CodebaseIndexer"
+  },
+  "rag/indexer.py::_embed": {
+    "fn_key": "rag/indexer.py::_embed",
+    "name": "_embed",
+    "file_path": "rag/indexer.py",
+    "calls": [],
+    "called_by": [
+      "rag/indexer.py::index_chunks",
+      "rag/indexer.py::search"
+    ],
+    "imports": [
+      "time",
+      "hashlib",
+      "numpy"
+    ],
+    "class_name": "CodebaseIndexer"
+  },
+  "rag/indexer.py::ensure_collection": {
+    "fn_key": "rag/indexer.py::ensure_collection",
+    "name": "ensure_collection",
+    "file_path": "rag/indexer.py",
+    "calls": [],
+    "called_by": [
+      "rag/indexer.py::index_chunks"
+    ],
+    "imports": [
+      "time",
+      "hashlib",
+      "numpy"
+    ],
+    "class_name": "CodebaseIndexer"
+  },
+  "rag/indexer.py::index_chunks": {
+    "fn_key": "rag/indexer.py::index_chunks",
+    "name": "index_chunks",
+    "file_path": "rag/indexer.py",
+    "calls": [
+      "rag/indexer.py::ensure_collection",
+      "rag/indexer.py::_embed",
+      "rag/indexer.py::_stable_point_id"
+    ],
+    "called_by": [
+      "scripts/index_repo.py::main"
+    ],
+    "imports": [
+      "time",
+      "hashlib",
+      "numpy"
+    ],
+    "class_name": "CodebaseIndexer"
+  },
+  "rag/indexer.py::search": {
+    "fn_key": "rag/indexer.py::search",
+    "name": "search",
+    "file_path": "rag/indexer.py",
+    "calls": [
+      "rag/indexer.py::_embed"
+    ],
+    "called_by": [
+      "agents/architecture_agent.py::_snippet_matches_security_pattern",
+      "pipeline/synthesizer.py::_mentioned_function_name",
+      "rag/retriever.py::retrieve_for_diff",
+      "tools/code_tools.py::detect_sql_patterns"
+    ],
+    "imports": [
+      "time",
+      "hashlib",
+      "numpy"
+    ],
+    "class_name": "CodebaseIndexer"
+  },
+  "rag/knowledge_graph.py::kg_path_for_repo": {
+    "fn_key": "rag/knowledge_graph.py::kg_path_for_repo",
+    "name": "kg_path_for_repo",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [],
+    "called_by": [
+      "api/dashboard.py::get_graph",
+      "api/webhook.py::_load_retriever",
+      "scripts/index_repo.py::main"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": null
+  },
+  "rag/knowledge_graph.py::__init__": {
+    "fn_key": "rag/knowledge_graph.py::__init__",
+    "name": "__init__",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [],
+    "called_by": [],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "_Visitor"
+  },
+  "rag/knowledge_graph.py::build_from_repo": {
+    "fn_key": "rag/knowledge_graph.py::build_from_repo",
+    "name": "build_from_repo",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [
+      "rag/knowledge_graph.py::_register_functions",
+      "rag/knowledge_graph.py::_extract_calls"
+    ],
+    "called_by": [
+      "scripts/index_repo.py::main"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "KnowledgeGraph"
+  },
+  "rag/knowledge_graph.py::_iter_functions_with_class": {
+    "fn_key": "rag/knowledge_graph.py::_iter_functions_with_class",
+    "name": "_iter_functions_with_class",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [
+      "rag/knowledge_graph.py::_visit_fn",
+      "rag/knowledge_graph.py::_visit_fn"
+    ],
+    "called_by": [
+      "rag/knowledge_graph.py::_register_functions",
+      "rag/knowledge_graph.py::_extract_calls"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "KnowledgeGraph"
+  },
+  "rag/knowledge_graph.py::visit_ClassDef": {
+    "fn_key": "rag/knowledge_graph.py::visit_ClassDef",
+    "name": "visit_ClassDef",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [],
+    "called_by": [],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "_Visitor"
+  },
+  "rag/knowledge_graph.py::_visit_fn": {
+    "fn_key": "rag/knowledge_graph.py::_visit_fn",
+    "name": "_visit_fn",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [],
+    "called_by": [
+      "rag/knowledge_graph.py::_iter_functions_with_class",
+      "rag/knowledge_graph.py::_iter_functions_with_class",
+      "rag/knowledge_graph.py::visit_FunctionDef",
+      "rag/knowledge_graph.py::visit_AsyncFunctionDef"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "_Visitor"
+  },
+  "rag/knowledge_graph.py::visit_FunctionDef": {
+    "fn_key": "rag/knowledge_graph.py::visit_FunctionDef",
+    "name": "visit_FunctionDef",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [
+      "rag/knowledge_graph.py::_visit_fn"
+    ],
+    "called_by": [],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "_Visitor"
+  },
+  "rag/knowledge_graph.py::visit_AsyncFunctionDef": {
+    "fn_key": "rag/knowledge_graph.py::visit_AsyncFunctionDef",
+    "name": "visit_AsyncFunctionDef",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [
+      "rag/knowledge_graph.py::_visit_fn"
+    ],
+    "called_by": [],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "_Visitor"
+  },
+  "rag/knowledge_graph.py::_register_functions": {
+    "fn_key": "rag/knowledge_graph.py::_register_functions",
+    "name": "_register_functions",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [
+      "rag/knowledge_graph.py::_iter_functions_with_class"
+    ],
+    "called_by": [
+      "rag/knowledge_graph.py::build_from_repo"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "KnowledgeGraph"
+  },
+  "rag/knowledge_graph.py::_extract_calls": {
+    "fn_key": "rag/knowledge_graph.py::_extract_calls",
+    "name": "_extract_calls",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [
+      "rag/knowledge_graph.py::_iter_functions_with_class"
+    ],
+    "called_by": [
+      "rag/knowledge_graph.py::build_from_repo"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "KnowledgeGraph"
+  },
+  "rag/knowledge_graph.py::get_call_chain": {
+    "fn_key": "rag/knowledge_graph.py::get_call_chain",
+    "name": "get_call_chain",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [],
+    "called_by": [
+      "rag/retriever.py::retrieve_for_diff"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "KnowledgeGraph"
+  },
+  "rag/knowledge_graph.py::get_dependents": {
+    "fn_key": "rag/knowledge_graph.py::get_dependents",
+    "name": "get_dependents",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [],
+    "called_by": [
+      "rag/retriever.py::retrieve_for_diff"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "KnowledgeGraph"
+  },
+  "rag/knowledge_graph.py::find_fn_key_by_name_and_file": {
+    "fn_key": "rag/knowledge_graph.py::find_fn_key_by_name_and_file",
+    "name": "find_fn_key_by_name_and_file",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [],
+    "called_by": [
+      "rag/retriever.py::retrieve_for_diff"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "KnowledgeGraph"
+  },
+  "rag/knowledge_graph.py::save": {
+    "fn_key": "rag/knowledge_graph.py::save",
+    "name": "save",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [],
+    "called_by": [
+      "scripts/index_repo.py::main"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "KnowledgeGraph"
+  },
+  "rag/knowledge_graph.py::load": {
+    "fn_key": "rag/knowledge_graph.py::load",
+    "name": "load",
+    "file_path": "rag/knowledge_graph.py",
+    "calls": [],
+    "called_by": [
+      "api/dashboard.py::get_graph",
+      "api/webhook.py::_load_retriever"
+    ],
+    "imports": [
+      "ast",
+      "json",
+      "os",
+      "re"
+    ],
+    "class_name": "KnowledgeGraph"
+  },
+  "rag/retriever.py::__init__": {
+    "fn_key": "rag/retriever.py::__init__",
+    "name": "__init__",
+    "file_path": "rag/retriever.py",
+    "calls": [],
+    "called_by": [],
+    "imports": [],
+    "class_name": "SmartRetriever"
+  },
+  "rag/retriever.py::retrieve_for_diff": {
+    "fn_key": "rag/retriever.py::retrieve_for_diff",
+    "name": "retrieve_for_diff",
+    "file_path": "rag/retriever.py",
+    "calls": [
+      "rag/indexer.py::search",
+      "rag/knowledge_graph.py::find_fn_key_by_name_and_file",
+      "rag/knowledge_graph.py::get_call_chain",
+      "rag/knowledge_graph.py::get_dependents"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [],
+    "class_name": "SmartRetriever"
+  },
+  "rag/retriever.py::build_agent_context_string": {
+    "fn_key": "rag/retriever.py::build_agent_context_string",
+    "name": "build_agent_context_string",
+    "file_path": "rag/retriever.py",
+    "calls": [],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [],
+    "class_name": "SmartRetriever"
+  },
+  "scripts/index_repo.py::main": {
+    "fn_key": "scripts/index_repo.py::main",
+    "name": "main",
+    "file_path": "scripts/index_repo.py",
+    "calls": [
+      "rag/knowledge_graph.py::build_from_repo",
+      "rag/knowledge_graph.py::save",
+      "rag/indexer.py::index_chunks",
+      "rag/knowledge_graph.py::kg_path_for_repo",
+      "rag/chunker.py::chunk_file"
+    ],
+    "called_by": [],
+    "imports": [
+      "argparse",
+      "os"
+    ],
+    "class_name": null
+  },
+  "tools/code_tools.py::strip_diff_to_source": {
+    "fn_key": "tools/code_tools.py::strip_diff_to_source",
+    "name": "strip_diff_to_source",
+    "file_path": "tools/code_tools.py",
+    "calls": [],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent",
+      "api/webhook.py::run_review_pipeline",
+      "pipeline/synthesizer.py::group_related_findings"
+    ],
+    "imports": [
+      "ast",
+      "re"
+    ],
+    "class_name": null
+  },
+  "tools/code_tools.py::extract_functions": {
+    "fn_key": "tools/code_tools.py::extract_functions",
+    "name": "extract_functions",
+    "file_path": "tools/code_tools.py",
+    "calls": [],
+    "called_by": [
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent",
+      "api/webhook.py::run_review_pipeline",
+      "pipeline/synthesizer.py::group_related_findings"
+    ],
+    "imports": [
+      "ast",
+      "re"
+    ],
+    "class_name": null
+  },
+  "tools/code_tools.py::detect_sql_patterns": {
+    "fn_key": "tools/code_tools.py::detect_sql_patterns",
+    "name": "detect_sql_patterns",
+    "file_path": "tools/code_tools.py",
+    "calls": [
+      "rag/indexer.py::search"
+    ],
+    "called_by": [
+      "agents/architecture_agent.py::_snippet_matches_security_pattern",
+      "agents/security_agent.py::run_security_agent"
+    ],
+    "imports": [
+      "ast",
+      "re"
+    ],
+    "class_name": null
+  },
+  "tools/code_tools.py::calculate_complexity": {
+    "fn_key": "tools/code_tools.py::calculate_complexity",
+    "name": "calculate_complexity",
+    "file_path": "tools/code_tools.py",
+    "calls": [],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent"
+    ],
+    "imports": [
+      "ast",
+      "re"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::generate_jwt": {
+    "fn_key": "tools/github_tools.py::generate_jwt",
+    "name": "generate_jwt",
+    "file_path": "tools/github_tools.py",
+    "calls": [],
+    "called_by": [
+      "tools/github_tools.py::get_installation_token"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::get_installation_token": {
+    "fn_key": "tools/github_tools.py::get_installation_token",
+    "name": "get_installation_token",
+    "file_path": "tools/github_tools.py",
+    "calls": [
+      "tools/github_tools.py::generate_jwt"
+    ],
+    "called_by": [
+      "api/dashboard.py::get_review_files",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "tools/github_tools.py::_auth_headers"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::_auth_headers": {
+    "fn_key": "tools/github_tools.py::_auth_headers",
+    "name": "_auth_headers",
+    "file_path": "tools/github_tools.py",
+    "calls": [
+      "tools/github_tools.py::get_installation_token"
+    ],
+    "called_by": [
+      "tools/github_tools.py::get_pr_diff",
+      "tools/github_tools.py::get_pr_files",
+      "tools/github_tools.py::post_pr_review",
+      "tools/github_tools.py::set_commit_status",
+      "tools/github_tools.py::get_full_file_content",
+      "tools/github_tools.py::get_pr"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::get_pr_diff": {
+    "fn_key": "tools/github_tools.py::get_pr_diff",
+    "name": "get_pr_diff",
+    "file_path": "tools/github_tools.py",
+    "calls": [
+      "tools/github_tools.py::_auth_headers"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::get_pr_files": {
+    "fn_key": "tools/github_tools.py::get_pr_files",
+    "name": "get_pr_files",
+    "file_path": "tools/github_tools.py",
+    "calls": [
+      "tools/github_tools.py::_auth_headers"
+    ],
+    "called_by": [
+      "api/dashboard.py::get_review_files",
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::post_pr_review": {
+    "fn_key": "tools/github_tools.py::post_pr_review",
+    "name": "post_pr_review",
+    "file_path": "tools/github_tools.py",
+    "calls": [
+      "tools/github_tools.py::_auth_headers"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::set_commit_status": {
+    "fn_key": "tools/github_tools.py::set_commit_status",
+    "name": "set_commit_status",
+    "file_path": "tools/github_tools.py",
+    "calls": [
+      "tools/github_tools.py::_auth_headers"
+    ],
+    "called_by": [
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline",
+      "api/webhook.py::run_review_pipeline"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::get_full_file_content": {
+    "fn_key": "tools/github_tools.py::get_full_file_content",
+    "name": "get_full_file_content",
+    "file_path": "tools/github_tools.py",
+    "calls": [
+      "tools/github_tools.py::_auth_headers"
+    ],
+    "called_by": [
+      "api/dashboard.py::get_review_files",
+      "api/dashboard.py::get_review_files"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::get_pr": {
+    "fn_key": "tools/github_tools.py::get_pr",
+    "name": "get_pr",
+    "file_path": "tools/github_tools.py",
+    "calls": [
+      "tools/github_tools.py::_auth_headers"
+    ],
+    "called_by": [
+      "api/dashboard.py::get_review_files"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/model_client.py::reason": {
+    "fn_key": "tools/model_client.py::reason",
+    "name": "reason",
+    "file_path": "tools/model_client.py",
+    "calls": [
+      "tools/model_client.py::_call_groq"
+    ],
+    "called_by": [
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/architecture_agent.py::run_architecture_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/documentation_agent.py::run_documentation_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/security_agent.py::run_security_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent",
+      "agents/test_coverage_agent.py::run_test_coverage_agent"
+    ],
+    "imports": [
+      "time",
+      "requests"
+    ],
+    "class_name": "FreeModelClient"
+  },
+  "tools/model_client.py::_call_groq": {
+    "fn_key": "tools/model_client.py::_call_groq",
+    "name": "_call_groq",
+    "file_path": "tools/model_client.py",
+    "calls": [],
+    "called_by": [
+      "tools/model_client.py::reason"
+    ],
+    "imports": [
+      "time",
+      "requests"
+    ],
+    "class_name": "FreeModelClient"
+  }
+}

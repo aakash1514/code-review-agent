@@ -2,10 +2,10 @@ import hashlib, hmac, json, traceback
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-
+from pipeline.reindexer import rebuild_index_for_repo
 from config import settings
 from models.findings import AgentReport
-from pipeline.job_store import init_db, sweep_stuck_jobs, create_job, update_status, save_result, is_stale_sha
+from pipeline.job_store import init_db, sweep_stuck_jobs, try_start_job, update_status, save_result, is_stale_sha
 from pipeline.runner import run_agents_parallel
 from pipeline.synthesizer import build_review_report, synthesize_markdown
 from pipeline.hitl_gate import evaluate_hitl_gate, DEFAULT_STATUS_CONTEXT
@@ -39,6 +39,7 @@ def _verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
     return hmac.compare_digest(expected, signature_header.removeprefix("sha256="))
 
 
+
 def _load_retriever(repo: str) -> SmartRetriever:
     kg = KnowledgeGraph()
     try:
@@ -48,6 +49,21 @@ def _load_retriever(repo: str) -> SmartRetriever:
     indexer = CodebaseIndexer()
     return SmartRetriever(kg, indexer)
 
+def _run_reindex_task(repo: str, ref: str) -> None:
+    """
+    Sync background task (push-to-default-branch trigger, gap #6) — runs in
+    a worker thread via FastAPI's BackgroundTasks, same as any sync callable
+    passed to add_task. Deliberately NOT async: rebuild_index_for_repo and
+    everything it calls (github_tools, CodebaseIndexer, HF embeddings) are
+    already synchronous/requests-based, matching the rest of this project.
+    """
+    try:
+        token = get_installation_token()
+        stats = rebuild_index_for_repo(repo, ref, token)
+        print(f"[reindex] {repo}@{ref[:7]}: {stats['functions']} functions, {stats['chunks']} chunks re-indexed")
+    except Exception as e:
+        traceback.print_exc()
+        print(f"[reindex] FAILED for {repo}@{ref[:7]}: {type(e).__name__}: {e}")
 
 @app.websocket("/ws/reviews")
 async def reviews_ws(websocket: WebSocket, repo: str):
@@ -57,8 +73,6 @@ async def reviews_ws(websocket: WebSocket, repo: str):
     await manager.connect(repo, websocket)
     try:
         while True:
-            # Client doesn't need to send anything meaningful; this just
-            # keeps the connection open and detects disconnects promptly.
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
@@ -77,6 +91,17 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 
     if event == "ping":
         return {"status": "pong"}
+    if event == "push":
+        repo = payload["repository"]["full_name"]
+        default_branch = payload["repository"]["default_branch"]
+        ref = payload.get("ref", "")
+        if ref != f"refs/heads/{default_branch}":
+            return {"status": "ignored", "reason": f"push not to default branch ({ref})"}
+        head_sha = payload.get("after")
+        if not head_sha or head_sha == "0" * 40:
+            return {"status": "ignored", "reason": "branch deleted or no commits"}
+        background_tasks.add_task(_run_reindex_task, repo, head_sha)
+        return {"status": "reindex_scheduled", "repo": repo, "ref": head_sha}
     if event != "pull_request":
         return {"status": "ignored", "reason": f"unhandled event: {event}"}
     action = payload.get("action")
@@ -87,15 +112,19 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     pr_number = payload["pull_request"]["number"]
     commit_sha = payload["pull_request"]["head"]["sha"]
 
-    # NOTE: create_job / duplicate-delivery protection / blocking-call ordering
-    # are unchanged from the current baseline — those three fixes (5.1/5.2/5.3)
-    # are intentionally deferred, per prior agreement, not part of this pass.
-    create_job(repo, pr_number, commit_sha)
+    # Fix 5.3: skip if a job for this exact commit is already pending/running/
+    # complete — protects against GitHub retrying a delivery (e.g. after a
+    # reported timeout) and re-running the full pipeline, which previously
+    # posted a confirmed duplicate PR comment in testing.
+    started = try_start_job(repo, pr_number, commit_sha)
+    if not started:
+        return {"status": "duplicate", "repo": repo, "pr_number": pr_number, "commit_sha": commit_sha}
 
-    token = get_installation_token()
-    set_commit_status(repo, commit_sha, "pending", "AI review in progress...",
-                       context=DEFAULT_STATUS_CONTEXT, token=token)
-
+    # Fix 5.2: no more blocking get_installation_token()/set_commit_status()
+    # here — both moved into run_review_pipeline's background task, so this
+    # route handler does only a fast local SQLite write before responding.
+    # That blocking pair, combined with ngrok latency, was the direct cause
+    # of a real GitHub delivery timeout in testing.
     background_tasks.add_task(run_review_pipeline, repo, pr_number, commit_sha)
     return {"status": "accepted", "repo": repo, "pr_number": pr_number, "commit_sha": commit_sha}
 
@@ -106,6 +135,16 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
 
     try:
         token = get_installation_token()
+
+        # Fix 5.2, continued: pending status now set here instead of the
+        # route handler. Wrapped in its own try/except — a failure to set
+        # the pending status shouldn't be treated as the whole review
+        # failing; the outer try/except is for real pipeline failures.
+        try:
+            set_commit_status(repo, commit_sha, "pending", "AI review in progress...",
+                               context=DEFAULT_STATUS_CONTEXT, token=token)
+        except Exception as e:
+            print(f"[webhook] failed to set pending status for {repo}#{pr_number}: {e}")
 
         await manager.broadcast(repo, {"commit_sha": commit_sha, "stage": "fetching_files"})
         files = get_pr_files(repo, pr_number, token)
@@ -148,8 +187,18 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
             pr_number=pr_number, repo=repo, commit_sha=commit_sha, agent_reports=all_agent_reports,
         )
 
-        # NOTE: save_result still runs before synthesize_markdown here — that's
-        # known bug 5.1, intentionally left as-is for this pass.
+        # Fix 5.1: generate markdown FIRST, attach it to the review object,
+        # THEN persist — previously save_result ran before synthesize_markdown
+        # even existed, so review.status stayed "pending" and
+        # review.synthesized_review stayed "" forever on completed reviews.
+        try:
+            full_diff = get_pr_diff(repo, pr_number, token)
+        except Exception:
+            full_diff = None
+        markdown = synthesize_markdown(review, diff_snippet=full_diff)
+        review.synthesized_review = markdown
+        review.status = "complete"
+
         save_result(repo, commit_sha, review.model_dump_json())
         await manager.broadcast(repo, {
             "commit_sha": commit_sha, "stage": "synthesizing",
@@ -162,12 +211,6 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
             return
 
         gate = evaluate_hitl_gate(review)
-        try:
-            full_diff = get_pr_diff(repo, pr_number, token)
-        except Exception:
-            full_diff = None
-        markdown = synthesize_markdown(review, diff_snippet=full_diff)
-
         post_pr_review(repo, pr_number, markdown, token=token)
         set_commit_status(repo, commit_sha, gate["state"], gate["description"],
                            context=DEFAULT_STATUS_CONTEXT, token=token)
