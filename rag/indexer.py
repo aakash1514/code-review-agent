@@ -143,6 +143,8 @@ class CodebaseIndexer:
         )
         return [point.payload for point in results.points]
     
+
+    
     def delete_repo(self, repo: str) -> None:
         """
         Deletes every Qdrant point tagged with this repo. Call before a full
