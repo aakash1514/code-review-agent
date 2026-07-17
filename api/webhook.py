@@ -95,6 +95,7 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
         repo = payload["repository"]["full_name"]
         default_branch = payload["repository"]["default_branch"]
         ref = payload.get("ref", "")
+        print(f"[webhook] push received: repo={repo} ref={ref!r} default_branch={default_branch!r}")
         if ref != f"refs/heads/{default_branch}":
             return {"status": "ignored", "reason": f"push not to default branch ({ref})"}
         head_sha = payload.get("after")
