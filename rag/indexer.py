@@ -142,3 +142,21 @@ class CodebaseIndexer:
             query_filter=query_filter,
         )
         return [point.payload for point in results.points]
+    
+
+    
+    def delete_repo(self, repo: str) -> None:
+        """
+        Deletes every Qdrant point tagged with this repo. Call before a full
+        reindex — index_chunks() only ever upserts, it has no way to know a
+        function was deleted or renamed since the last index, so without
+        this a fully automated rebuild (gap #6's push trigger) would let
+        stale vectors for long-gone code silently accumulate forever,
+        polluting future similarity search results. Safe to call even if
+        the collection doesn't exist yet or has no points for this repo.
+        """
+        self.ensure_collection()
+        self.client.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=Filter(must=[FieldCondition(key="repo", match=MatchValue(value=repo))]),
+        )
