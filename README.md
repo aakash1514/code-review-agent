@@ -162,6 +162,8 @@ Routes marked "Yes" expect an `Authorization: Bearer <session_id>` header. The s
 - [ ] Prompt size capping for large RAG contexts
 - [ ] Full audit history for override decisions
 
+Deferred fixes and open questions are tracked in [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
+
 ## License
 
 Released under the [MIT License](LICENSE).
