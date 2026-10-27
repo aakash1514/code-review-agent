@@ -58,16 +58,18 @@ export default function App() {
     setUser(null);
   }
 
-  const loadList = useCallback(async (currentRepo) => {
-    try {
-      const data = await fetchReviews(currentRepo);
-      setReviews(data.reviews ?? []);
-      setListError(null);
-    } catch (e) {
-      setListError(e.message);
-    } finally {
-      setListLoading(false);
-    }
+  const loadList = useCallback((currentRepo) => {
+    return fetchReviews(currentRepo)
+      .then((data) => {
+        setReviews(data.reviews ?? []);
+        setListError(null);
+      })
+      .catch((e) => {
+        setListError(e.message);
+      })
+      .finally(() => {
+        setListLoading(false);
+      });
   }, []);
 
   const loadDetail = useCallback(async (currentRepo, sha) => {
@@ -80,12 +82,8 @@ export default function App() {
     }
   }, []);
 
-  // initial + repo-change load
+  // initial + repo-change load (per-repo state is reset in handleRepoSubmit)
   useEffect(() => {
-    setListLoading(true);
-    setSelectedSha(null);
-    setSelectedJob(null);
-    setEventsByCommit({});
     loadList(repo);
   }, [repo, loadList]);
 
@@ -138,7 +136,12 @@ export default function App() {
 
   function handleRepoSubmit() {
     const trimmed = repoInput.trim();
-    if (trimmed) setRepo(trimmed);
+    if (!trimmed || trimmed === repo) return;
+    setRepo(trimmed);
+    setListLoading(true);
+    setSelectedSha(null);
+    setSelectedJob(null);
+    setEventsByCommit({});
   }
 
   return (
@@ -195,7 +198,7 @@ export default function App() {
         </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0 }}>
-          <RepoGraphView repo={repo} />
+          <RepoGraphView key={repo} repo={repo} />
         </div>
       )}
     </div>

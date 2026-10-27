@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 const WS_BASE = API_BASE.replace(/^http/, "ws");
@@ -14,7 +14,11 @@ export function useReviewSocket(repo, onEvent) {
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
+
+  // Keep the latest handler without reconnecting; refs can't be written during render.
+  useLayoutEffect(() => {
+    onEventRef.current = onEvent;
+  });
 
   useEffect(() => {
     let cancelled = false;

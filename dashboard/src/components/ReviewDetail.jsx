@@ -63,13 +63,24 @@ function TabButton({ active, onClick, children }) {
   );
 }
 
+function persistedResolution(job) {
+  return job?.override_action ? { action: job.override_action, by: job.override_by } : null;
+}
+
 export default function ReviewDetail({ repo, job, onActionComplete, liveEvents = [], currentUser, onLogin }) {
+  const review = job?.review;
+  // Diff files are fetched once per (repo, commit) once a review exists.
+  const filesKey = job?.commit_sha && review ? `${repo}\n${job.commit_sha}` : null;
+
   const [actionState, setActionState] = useState({ loading: false, message: null });
-  const [resolution, setResolution] = useState(null); // { action: "approved"|"blocked", by: string } | null
+  // Restore a persisted decision from the backend (survives reloads),
+  // rather than always starting blank — this is the actual point of
+  // persisting override_action/override_by server-side.
+  const [resolution, setResolution] = useState(() => persistedResolution(job)); // { action: "approved"|"blocked", by: string } | null
   const [clearing, setClearing] = useState(false);
   const [tab, setTab] = useState("findings");
   const [files, setFiles] = useState(null);
-  const [filesLoading, setFilesLoading] = useState(false);
+  const [filesLoading, setFilesLoading] = useState(filesKey !== null);
   const [filesError, setFilesError] = useState(null);
   const [jumpTarget, setJumpTarget] = useState(null);
 
@@ -78,19 +89,33 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
   const [graphError, setGraphError] = useState(null);
   const graphRepoRef = useRef(null);
 
-  const review = job?.review;
-
-  useEffect(() => {
+  // Reset per-review UI state when the commit or its persisted decision
+  // changes (adjusting state during render instead of in an effect).
+  const [prevJob, setPrevJob] = useState({
+    sha: job?.commit_sha,
+    overrideAction: job?.override_action,
+    overrideBy: job?.override_by,
+  });
+  if (
+    prevJob.sha !== job?.commit_sha ||
+    prevJob.overrideAction !== job?.override_action ||
+    prevJob.overrideBy !== job?.override_by
+  ) {
+    setPrevJob({ sha: job?.commit_sha, overrideAction: job?.override_action, overrideBy: job?.override_by });
     setTab("findings");
     setFiles(null);
     setFilesError(null);
     setJumpTarget(null);
-    // Restore a persisted decision from the backend (survives reloads),
-    // rather than always starting blank — this is the actual point of
-    // persisting override_action/override_by server-side.
-    setResolution(job?.override_action ? { action: job.override_action, by: job.override_by } : null);
+    setResolution(persistedResolution(job));
     setActionState({ loading: false, message: null });
-  }, [job?.commit_sha, job?.override_action, job?.override_by]);
+  }
+
+  // Mark the diff as loading as soon as a new fetch is due.
+  const [prevFilesKey, setPrevFilesKey] = useState(filesKey);
+  if (filesKey !== prevFilesKey) {
+    setPrevFilesKey(filesKey);
+    if (filesKey !== null) setFilesLoading(true);
+  }
 
   useEffect(() => {
     if (tab !== "callgraph") return;
@@ -120,7 +145,6 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
   useEffect(() => {
     if (!job?.commit_sha || !review) return;
     let cancelled = false;
-    setFilesLoading(true);
     fetchReviewFiles(repo, job.commit_sha)
       .then((data) => {
         if (!cancelled) setFiles(data.files ?? []);
