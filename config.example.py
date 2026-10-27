@@ -21,9 +21,12 @@ class Settings:
     GITHUB_WEBHOOK_SECRET: str = os.getenv("GITHUB_WEBHOOK_SECRET", "change-me-webhook-secret")
 
     # GitHub OAuth (dashboard user login, separate from App auth above)
+    # Uses the GitHub App's own OAuth credentials: set the App's callback URL to
+    # http://localhost:8000/auth/callback and generate a client secret there.
+    # A standalone OAuth App with the same callback URL also works.
     # OAuth client ID from the same GitHub App's General settings page.
     GITHUB_OAUTH_CLIENT_ID: str = os.getenv("GITHUB_OAUTH_CLIENT_ID", "Iv1.xxxxxxxxxxxxxxxx")
-    # OAuth client secret paired with the client ID above.
+    # Client secret generated in the same GitHub App (or OAuth App).
     GITHUB_OAUTH_CLIENT_SECRET: str = os.getenv("GITHUB_OAUTH_CLIENT_SECRET", "change-me-oauth-client-secret")
     # Callback URL registered with GitHub for the OAuth flow.
     GITHUB_OAUTH_REDIRECT_URI: str = os.getenv("GITHUB_OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")

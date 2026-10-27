@@ -73,7 +73,7 @@ dashboard/   React + Vite frontend
 
 **Prerequisites:** Python 3.11+, Node.js 18+, a GitHub App installed on the target repo, and free accounts on Groq, Hugging Face and Qdrant Cloud.
 
-1. **Configure.** Create `config.py` (it's git-ignored) with these settings:
+1. **Configure.** Copy [`config.example.py`](config.example.py) to `config.py` (it's git-ignored) and fill in these settings:
 
    | Setting | What it is |
    | --- | --- |
@@ -83,7 +83,12 @@ dashboard/   React + Vite frontend
    | `GROQ_API_KEY`, `GROQ_MODEL_REASONING`, `GROQ_MODEL_LIGHT` | Groq key and model names |
    | `HF_TOKEN` | Hugging Face token for embeddings |
    | `QDRANT_URL`, `QDRANT_API_KEY` | Qdrant Cloud cluster |
+   | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET` | OAuth credentials for dashboard login |
+   | `GITHUB_OAUTH_REDIRECT_URI` | OAuth callback, e.g. `http://localhost:8000/auth/callback` |
+   | `DASHBOARD_BASE_URL` | Where the dashboard runs, e.g. `http://localhost:5173` (login redirects back here) |
    | `DATABASE_URL` | e.g. `sqlite:///./review_agent.db` |
+
+   **Set up dashboard login.** Dashboard login uses your GitHub App's own OAuth credentials. In the GitHub App's settings (*Settings → Developer settings → GitHub Apps → your app*), set the callback URL to `http://localhost:8000/auth/callback` and generate a client secret. Copy the App's client ID and that secret into `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`. A standalone OAuth App with the same callback URL also works.
 
 2. **Install and index the target repo.**
 
@@ -112,16 +117,23 @@ dashboard/   React + Vite frontend
 
 ## API
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| POST | `/webhook` | GitHub App webhook receiver |
-| WS | `/ws/reviews?repo=owner/name` | Live review progress |
-| GET | `/reviews` | List reviews |
-| GET | `/reviews/{commit_sha}` | Review detail |
-| GET | `/reviews/{commit_sha}/files` | Changed files for the diff viewer |
-| POST | `/reviews/{commit_sha}/approve` | Human override: approve |
-| POST | `/reviews/{commit_sha}/block` | Human override: block |
-| GET | `/graph` | Call graph for the dashboard |
+| Method | Route | Purpose | Login required |
+| --- | --- | --- | --- |
+| POST | `/webhook` | GitHub App webhook receiver (HMAC-verified) | No |
+| WS | `/ws/reviews?repo=owner/name` | Live review progress | No |
+| GET | `/api/reviews?repo=owner/name` | List reviews | No |
+| GET | `/api/reviews/{commit_sha}?repo=owner/name` | Review detail | No |
+| GET | `/api/reviews/{commit_sha}/files?repo=owner/name` | Changed files for the diff viewer | No |
+| POST | `/api/reviews/{commit_sha}/approve?repo=owner/name` | Human override: approve | Yes |
+| POST | `/api/reviews/{commit_sha}/block?repo=owner/name` | Human override: block | Yes |
+| POST | `/api/reviews/{commit_sha}/clear-override?repo=owner/name` | Remove a human override | Yes |
+| GET | `/api/graph?repo=owner/name` | Call graph for the dashboard | No |
+| GET | `/auth/login` | Redirect to GitHub OAuth consent | No |
+| GET | `/auth/callback` | OAuth callback; creates a session and redirects to the dashboard | No |
+| GET | `/auth/me` | Current user's login and avatar | Yes |
+| POST | `/auth/logout` | End the current session | No |
+
+Routes marked "Login required" expect an `Authorization: Bearer <session_id>` header. The session ID comes from the OAuth login flow. The override routes also check that the user has write access to the repo.
 
 ## Engineering notes
 
@@ -129,9 +141,18 @@ dashboard/   React + Vite frontend
 - **Cross-repo isolation.** Qdrant point IDs hash `repo::file::function`, and every search filters by repo, so two repos with identical function names never overwrite each other.
 - **Safe de-duplication.** Only exact duplicates are dropped. Showing a near-duplicate twice is safer than silently losing a real finding.
 
+## Limitations
+
+- **Python only.** The agents only analyse Python code. The AST chunker and the call graph are both built on Python's `ast` module. Other files, such as `.js` and `.ts`, only get coarse fallback chunks and are left out of the call graph.
+- **Call-graph key collision.** Call-graph nodes are keyed by file and function name, not by class. If two different classes in the same file define a method with the same name, one overwrites the other in the graph.
+
 ## Roadmap
 
 - [ ] Deploy to AWS: ECS Fargate, Amazon Bedrock with Groq fallback, CloudWatch alarms, Terraform
 - [ ] CI/CD with GitHub Actions (lint, tests, image build, deploy via OIDC)
 - [ ] Prompt size capping for large RAG contexts
 - [ ] Full audit history for override decisions
+
+## License
+
+Released under the [MIT License](LICENSE).
