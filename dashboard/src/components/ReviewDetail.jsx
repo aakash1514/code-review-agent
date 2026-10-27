@@ -89,23 +89,30 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
   const [graphError, setGraphError] = useState(null);
   const graphRepoRef = useRef(null);
 
-  // Reset per-review UI state when the commit or its persisted decision
-  // changes (adjusting state during render instead of in an effect).
-  const [prevJob, setPrevJob] = useState({
+  // Reset per-review UI state when a different commit is opened
+  // (adjusting state during render instead of in an effect).
+  const [prevSha, setPrevSha] = useState(job?.commit_sha);
+  if (prevSha !== job?.commit_sha) {
+    setPrevSha(job?.commit_sha);
+    setTab("findings");
+    setFiles(null);
+    setFilesError(null);
+    setJumpTarget(null);
+  }
+
+  // Sync the banner when the persisted decision changes (or a new commit is
+  // opened) without touching the tab or the loaded diff.
+  const [prevDecision, setPrevDecision] = useState({
     sha: job?.commit_sha,
     overrideAction: job?.override_action,
     overrideBy: job?.override_by,
   });
   if (
-    prevJob.sha !== job?.commit_sha ||
-    prevJob.overrideAction !== job?.override_action ||
-    prevJob.overrideBy !== job?.override_by
+    prevDecision.sha !== job?.commit_sha ||
+    prevDecision.overrideAction !== job?.override_action ||
+    prevDecision.overrideBy !== job?.override_by
   ) {
-    setPrevJob({ sha: job?.commit_sha, overrideAction: job?.override_action, overrideBy: job?.override_by });
-    setTab("findings");
-    setFiles(null);
-    setFilesError(null);
-    setJumpTarget(null);
+    setPrevDecision({ sha: job?.commit_sha, overrideAction: job?.override_action, overrideBy: job?.override_by });
     setResolution(persistedResolution(job));
     setActionState({ loading: false, message: null });
   }

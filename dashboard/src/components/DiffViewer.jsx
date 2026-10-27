@@ -38,12 +38,18 @@ function languageForFilename(filename) {
 }
 
 export default function DiffViewer({ files, findings, jumpTarget }) {
-  const [manualFile, setSelectedFile] = useState(files?.[0]?.filename ?? null);
-  // An active jump target pins the selection to its file.
-  const selectedFile = jumpTarget ? jumpTarget.file : manualFile;
+  const [selectedFile, setSelectedFile] = useState(jumpTarget ? jumpTarget.file : files?.[0]?.filename ?? null);
+  // A new jump target (each jump is a fresh object) switches to its file;
+  // after that, clicking a file tab selects that file as usual.
+  const [prevJumpTarget, setPrevJumpTarget] = useState(jumpTarget);
+  if (jumpTarget !== prevJumpTarget) {
+    setPrevJumpTarget(jumpTarget);
+    if (jumpTarget) setSelectedFile(jumpTarget.file);
+  }
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
   const decorationsRef = useRef([]);
+  const revealedJumpRef = useRef(null);
 
   const file = files.find((f) => f.filename === selectedFile);
   const fileFindings = findings.filter((f) => f.location.file === selectedFile);
@@ -78,7 +84,8 @@ export default function DiffViewer({ files, findings, jumpTarget }) {
   }, [selectedFile, files, findings]);
 
   useEffect(() => {
-    if (!jumpTarget) return;
+    // Reveal each jump once, and only while its file is the one shown.
+    if (!jumpTarget || jumpTarget.file !== selectedFile || revealedJumpRef.current === jumpTarget) return;
     const diffEditor = editorRef.current;
     const monaco = monacoRef.current;
     if (!diffEditor || !monaco) return;
@@ -86,6 +93,7 @@ export default function DiffViewer({ files, findings, jumpTarget }) {
     const lineNumber = jumpTarget.lineStart;
     modifiedEditor.revealLineInCenter(lineNumber);
     modifiedEditor.setSelection(new monaco.Range(lineNumber, 1, lineNumber, 1));
+    revealedJumpRef.current = jumpTarget;
   }, [jumpTarget, selectedFile]);
 
   if (!files || files.length === 0) {
