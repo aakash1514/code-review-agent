@@ -50,3 +50,6 @@ review_agent.db-wal
 # SQLite runtime files
 *.db-shm
 *.db-wal
+
+# Local DB backups made before schema migrations
+*.db.bak-*

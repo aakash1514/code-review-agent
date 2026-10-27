@@ -17,7 +17,10 @@ from rag.retriever import SmartRetriever
 from api.dashboard import router as dashboard_router
 from api.ws_manager import manager
 from api.auth import router as auth_router
-from pipeline.session_store import init_session_db, purge_expired_ws_tickets, consume_ws_ticket
+from pipeline.session_store import (
+    init_session_db, purge_expired_ws_tickets, purge_expired_sessions, purge_expired_handoff_codes,
+    consume_ws_ticket,
+)
 from starlette.concurrency import run_in_threadpool
 
 HANDLED_ACTIONS = {"opened", "synchronize"}
@@ -26,9 +29,12 @@ HANDLED_ACTIONS = {"opened", "synchronize"}
 async def lifespan(app: FastAPI):
     init_db()
     init_session_db()
-    purged = purge_expired_ws_tickets()
-    if purged:
-        print(f"[startup] purged {purged} expired WebSocket ticket(s)")
+    for purge, what in ((purge_expired_ws_tickets, "WebSocket ticket(s)"),
+                        (purge_expired_handoff_codes, "login handoff code(s)"),
+                        (purge_expired_sessions, "dashboard session(s)")):
+        purged = purge()
+        if purged:
+            print(f"[startup] purged {purged} expired {what}")
     swept = sweep_stuck_jobs()
     if swept:
         print(f"[startup] swept {swept} stuck job(s) from a previous run")

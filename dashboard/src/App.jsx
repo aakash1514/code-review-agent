@@ -5,7 +5,7 @@ import ReviewDetail from "./components/ReviewDetail";
 import RepoGraphView from "./components/RepoGraphView";
 import SignInPrompt from "./components/SignInPrompt";
 import {
-  fetchReviews, fetchReview, fetchMe, loginUrl, logout as apiLogout, setStoredSessionToken, onAuthRequired,
+  fetchReviews, fetchReview, fetchMe, loginUrl, logout as apiLogout, exchangeHandoffCode, onAuthRequired,
 } from "./api";
 import { useReviewSocket } from "./hooks/useReviewSocket";
 
@@ -41,20 +41,21 @@ export default function App() {
   const signedIn = Boolean(user);
   const canLoad = signedIn && !accessDenied;
 
-  // Pick up ?session=<id> from the OAuth callback redirect, persist it, and
-  // strip it from the URL so a page refresh doesn't re-process a stale
-  // query param. Runs once on mount; also handles the "already had a valid
-  // session from a previous visit" case via fetchMe()'s stored-token fallback.
+  // Pick up the one-time ?code= from the OAuth callback redirect, strip it
+  // from the URL straight away (it's single-use, so a refresh or the history
+  // entry must not replay it), then trade it for a session token. Runs once
+  // on mount; also handles the "already had a valid session from a previous
+  // visit" case via fetchMe()'s stored-token fallback.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const sessionFromUrl = params.get("session");
-    if (sessionFromUrl) {
-      setStoredSessionToken(sessionFromUrl);
-      params.delete("session");
+    const code = params.get("code");
+    if (code) {
+      params.delete("code");
       const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "");
       window.history.replaceState({}, "", cleanUrl);
     }
-    fetchMe()
+    (code ? exchangeHandoffCode(code) : Promise.resolve())
+      .then(() => fetchMe())
       .catch(() => null)
       .then((me) => {
         setUser(me);

@@ -6,9 +6,12 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Header, HTTPException, Query, Depends
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from config import settings
-from pipeline.session_store import create_session, get_session, delete_session
+from pipeline.session_store import (
+    create_handoff_code, redeem_handoff_code, get_session, delete_session, SESSION_TTL_SECONDS,
+)
 from tools.github_tools import (
     exchange_oauth_code, get_authenticated_user, get_installation_token,
     check_repo_read_permission, is_repo_private,
@@ -65,10 +68,26 @@ def callback(code: str = Query(...), state: str = Query(...)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"GitHub OAuth exchange failed: {e}")
 
-    session_id = create_session(user["login"], user["avatar_url"], user_token)
+    # The user's OAuth token is only needed to learn who logged in; it's
+    # dropped here, never stored. The dashboard gets a one-time handoff code,
+    # not the session itself — see create_handoff_code.
+    handoff_code = create_handoff_code(user["login"], user["avatar_url"])
+    return RedirectResponse(f"{settings.DASHBOARD_BASE_URL}/?{urlencode({'code': handoff_code})}")
 
-    redirect_url = f"{settings.DASHBOARD_BASE_URL}/?session={session_id}"
-    return RedirectResponse(redirect_url)
+
+class HandoffExchange(BaseModel):
+    code: str
+
+
+@router.post("/exchange")
+def exchange(body: HandoffExchange):
+    """Trades the one-time ?code= from the callback redirect for a session
+    token. The code goes in the JSON body so the session-bearing response
+    never touches a URL. 401 for unknown, expired or already used codes."""
+    session_id = redeem_handoff_code(body.code)
+    if session_id is None:
+        raise HTTPException(status_code=401, detail="login code is invalid, expired or already used — please sign in again")
+    return {"session_token": session_id, "expires_in": SESSION_TTL_SECONDS}
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> dict:

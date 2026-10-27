@@ -130,11 +130,15 @@ dashboard/   React + Vite frontend
 | GET | `/api/graph?repo=owner/name` | Call graph for the dashboard | Yes + read access |
 | POST | `/api/ws-ticket?repo=owner/name` | Issue a single-use ticket for the WebSocket | Yes + read access |
 | GET | `/auth/login` | Redirect to GitHub OAuth consent | No |
-| GET | `/auth/callback` | OAuth callback; creates a session and redirects to the dashboard | No |
+| GET | `/auth/callback` | OAuth callback; redirects to the dashboard with a one-time `?code=` | No |
+| POST | `/auth/exchange` | Trade the one-time code (JSON body `{"code": ...}`) for a session token | No |
 | GET | `/auth/me` | Current user's login and avatar | Yes |
 | POST | `/auth/logout` | End the current session | No |
 
 Routes marked "Yes" expect an `Authorization: Bearer <session_id>` header. The session ID comes from the OAuth login flow. Without a valid session they return `401`.
+
+- **Login handoff:** after GitHub login, `/auth/callback` redirects to the dashboard with a one-time `?code=`, never the session itself. The dashboard immediately removes it from the URL and sends it to `POST /auth/exchange` in a JSON body to get the session token. A code is valid for 60 seconds and works once; an unknown, expired or reused code returns `401`. Sessions last 7 days.
+- **No GitHub token is stored.** The user's GitHub OAuth token is used once during the callback to find out who logged in, then dropped. Expired sessions, tickets and handoff codes are deleted on startup.
 
 - **Read access** means the signed-in GitHub user can read the repo: any signed-in user for a public repo, or a collaborator with read access or higher (including org and team access) for a private one. Otherwise the route returns `403`. Allowed checks and repo visibility are cached in-process for 5 minutes, so removing someone's access takes up to 5 minutes to apply here. Denials are not cached.
 - **Write access** is checked on every request for the override routes.

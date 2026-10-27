@@ -57,6 +57,29 @@ export function loginUrl() {
   return `${API_BASE}/auth/login`;
 }
 
+// The OAuth callback redirects back with a one-time ?code=; trade it for a
+// session token and store that. Codes are single-use, so concurrent calls for
+// the same code (React StrictMode runs mount effects twice in dev) share one
+// request instead of the second one spending nothing and failing.
+const pendingExchanges = new Map();
+
+export function exchangeHandoffCode(code) {
+  if (!pendingExchanges.has(code)) {
+    pendingExchanges.set(code, (async () => {
+      const res = await fetch(`${API_BASE}/auth/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      if (!res.ok) return false;
+      const { session_token: token } = await res.json();
+      setStoredSessionToken(token);
+      return true;
+    })());
+  }
+  return pendingExchanges.get(code);
+}
+
 export async function fetchMe() {
   const token = getStoredSessionToken();
   if (!token) return null;
