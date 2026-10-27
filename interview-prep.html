@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <title>Automated PR Review System — Interview Prep</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f4f6;
+      --card: #ffffff;
+      --ink: #172033;
+      --muted: #5f6b7a;
+      --line: #e5e7eb;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      --warn: #92400e;
+      --warn-soft: #fffbeb;
+      --good: #166534;
+      --good-soft: #f0fdf4;
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 16px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+    }
+    .wrap { width: min(760px, 100%); margin: 0 auto; padding: 18px 14px 48px; }
+    header {
+      background: linear-gradient(145deg, #111827, #1e3a8a);
+      color: white;
+      border-radius: var(--radius);
+      padding: 24px 20px;
+      margin-bottom: 14px;
+      box-shadow: 0 8px 24px #17203322;
+    }
+    h1 { font-size: clamp(1.7rem, 7vw, 2.5rem); line-height: 1.15; margin: 0 0 10px; }
+    h2 { font-size: 1.25rem; line-height: 1.25; margin: 0; }
+    h3 { font-size: 1rem; margin: 20px 0 6px; }
+    p { margin: 8px 0; }
+    a { color: var(--accent); }
+    .subtitle { color: #dbeafe; margin: 0; }
+    .notice, section, details {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      margin: 12px 0;
+      overflow: hidden;
+    }
+    .notice { padding: 16px; }
+    .notice.warning { background: var(--warn-soft); border-color: #fde68a; color: var(--warn); }
+    .notice.good { background: var(--good-soft); border-color: #bbf7d0; color: var(--good); }
+    section { padding: 18px; }
+    details { padding: 0; }
+    summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 16px 18px;
+      font-weight: 750;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "+"; color: var(--accent); font-size: 1.25rem; line-height: 1; }
+    details[open] summary::after { content: "−"; }
+    .details-body { border-top: 1px solid var(--line); padding: 0 18px 18px; }
+    ol, ul { padding-left: 1.35rem; margin: 8px 0; }
+    li { margin: 7px 0; }
+    .flow {
+      display: grid;
+      gap: 8px;
+      margin: 12px 0 4px;
+    }
+    .step {
+      background: var(--accent-soft);
+      border: 1px solid #bfdbfe;
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+    .step strong { display: block; color: #1e3a8a; }
+    .arrow { text-align: center; color: var(--accent); font-weight: 800; height: 10px; line-height: 10px; }
+    code {
+      background: #f1f5f9;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-size: .9em;
+      overflow-wrap: anywhere;
+    }
+    pre {
+      background: #111827;
+      color: #e5e7eb;
+      padding: 13px;
+      border-radius: 10px;
+      overflow-x: auto;
+      font-size: .82rem;
+      line-height: 1.45;
+    }
+    .q { font-weight: 750; margin-top: 20px; }
+    .answer { margin-top: 4px; color: var(--muted); }
+    .file { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; }
+    .pill {
+      display: inline-block;
+      background: #e0e7ff;
+      color: #3730a3;
+      border-radius: 999px;
+      padding: 2px 9px;
+      font-size: .78rem;
+      font-weight: 700;
+      margin: 2px 3px 2px 0;
+    }
+    .top { text-align: right; font-size: .85rem; margin: 8px 2px; }
+    @media (min-width: 640px) {
+      .wrap { padding-top: 30px; }
+      .flow { grid-template-columns: 1fr 24px 1fr 24px 1fr; align-items: center; }
+      .arrow { transform: rotate(-90deg); }
+    }
+  </style>
+</head>
+<body>
+  <main id="top" class="wrap">
+    <header>
+      <h1>Automated PR Review System</h1>
+      <p class="subtitle">FastAPI · React · Qdrant · GitHub App · Groq · Hugging Face</p>
+      <p class="subtitle">Mobile interview cheat sheet</p>
+    </header>
+
+    <div class="notice warning">
+      <strong>Be accurate in the interview.</strong>
+      This repository uses Groq for reasoning and Hugging Face for embeddings.
+      I found no Bedrock, Terraform, ECS/Fargate, GitHub Actions, or monitoring implementation in this snapshot.
+    </div>
+
+    <section>
+      <h2>30-second explanation</h2>
+      <p>
+        GitHub sends a signed webhook when a pull request opens or changes.
+        FastAPI verifies it, deduplicates by commit SHA, and schedules a background review.
+        Each changed file gets targeted AST and vector context, then four specialist agents run concurrently.
+        Their findings are merged, deduplicated, ranked, synthesized into a PR comment, and converted into a GitHub status check.
+        The React dashboard streams progress and lets an authenticated repository writer approve or block the result.
+      </p>
+      <p>
+        Main orchestration:
+        <span class="file">api/webhook.py</span>,
+        <span class="file">pipeline/runner.py</span>,
+        <span class="file">rag/retriever.py</span>.
+      </p>
+    </section>
+
+    <details open>
+      <summary>1. End-to-end flow</summary>
+      <div class="details-body">
+        <div class="flow">
+          <div class="step"><strong>1 · GitHub webhook</strong>HMAC signature check; accept opened/synchronize.</div>
+          <div class="arrow">↓</div>
+          <div class="step"><strong>2 · Durable job</strong>SQLite idempotency check by repo + commit SHA.</div>
+          <div class="arrow">↓</div>
+          <div class="step"><strong>3 · Fetch context</strong>GitHub changed files + AST graph + Qdrant similarity.</div>
+          <div class="arrow">↓</div>
+          <div class="step"><strong>4 · Four agents</strong>Security, architecture, test risk, documentation.</div>
+          <div class="arrow">↓</div>
+          <div class="step"><strong>5 · Decision</strong>Deduplicate, synthesize, post comment, set status.</div>
+        </div>
+        <p><strong>Per file:</strong> agents run in parallel. Files themselves are currently processed sequentially.</p>
+        <p><strong>Dashboard:</strong> WebSocket events show running, fetching, file started, agent complete, synthesizing, complete, or failed.</p>
+        <p>Relevant files: <span class="file">api/webhook.py</span>, <span class="file">pipeline/runner.py</span>, <span class="file">dashboard/src/App.jsx</span>, <span class="file">dashboard/src/hooks/useReviewSocket.js</span>.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>2. The four agents and parallelism</summary>
+      <div class="details-body">
+        <ul>
+          <li><span class="pill">Security</span> injection, auth, secrets, crypto, SSRF, unsafe input.</li>
+          <li><span class="pill">Architecture</span> robustness, complexity, coupling, validation, edge cases.</li>
+          <li><span class="pill">Test coverage</span> identifies testable risk from the diff; it does not inspect the actual test suite.</li>
+          <li><span class="pill">Documentation</span> missing or misleading docs and comments.</li>
+        </ul>
+        <p>Implementation: <span class="file">pipeline/runner.py</span> uses <code>asyncio.gather</code> plus <code>run_in_executor</code>.</p>
+        <p><strong>Precise answer:</strong> orchestration is async, but agents make synchronous <code>requests</code> calls in thread-pool workers. It is not pure async HTTP.</p>
+        <pre>tasks = [_run_one(fn) for fn in AGENT_FUNCTIONS]
+return await asyncio.gather(*tasks)</pre>
+        <p><strong>“4x faster” caveat:</strong> there is no benchmark in the repository. The theoretical comparison is sequential four-agent execution, about <code>4T</code>, versus parallel execution near <code>T</code> plus overhead.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>3. Hybrid RAG: AST graph + Qdrant</summary>
+      <div class="details-body">
+        <h3>AST knowledge graph</h3>
+        <p><span class="file">rag/knowledge_graph.py</span> parses Python with <code>ast</code>, records functions, calls, and dependents. It answers: “What does this function call?” and “Who depends on it?”</p>
+        <h3>Qdrant vector search</h3>
+        <p><span class="file">rag/indexer.py</span> chunks code, creates 384-dimensional Hugging Face embeddings, and stores repository-tagged vectors. Queries filter by <code>repo</code> to prevent cross-repository leakage.</p>
+        <h3>Context reduction</h3>
+        <p><span class="file">rag/retriever.py</span> caps the context at 8,000 characters, roughly around 2K tokens depending on the tokenizer. It includes up to 10 graph entries and 5 similar snippets.</p>
+        <p><strong>Honest caveat:</strong> the exact “15K to 2K tokens” improvement is not benchmarked in this codebase.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>4. GitHub App, OAuth, and status checks</summary>
+      <div class="details-body">
+        <p><strong>App auth:</strong> create a short-lived App JWT from the private key, exchange it for an installation token, cache it, and refresh before expiry. Used for PR files, comments, statuses, contents, and permission checks.</p>
+        <p><strong>Human auth:</strong> GitHub OAuth identifies the dashboard user. A random state protects the OAuth round trip; a server-side SQLite session lasts seven days.</p>
+        <p><strong>Status:</strong></p>
+        <ul>
+          <li><code>pending</code> when review starts</li>
+          <li><code>failure</code> when a CRITICAL finding exists</li>
+          <li><code>success</code> when there are no CRITICAL findings</li>
+          <li><code>failure</code> when the pipeline fails</li>
+        </ul>
+        <p>The context name is <code>ai-code-review</code>. See <span class="file">tools/github_tools.py</span>, <span class="file">api/auth.py</span>, and <span class="file">pipeline/hitl_gate.py</span>.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>5. Failure handling and cost control</summary>
+      <div class="details-body">
+        <h3>Agent failure</h3>
+        <p>Each agent has a 45-second logical timeout. Timeout, exception, model unavailability, or two invalid JSON responses become an error-bearing <code>AgentReport</code>; other agents continue.</p>
+        <p>Subtlety: cancelling the executor wait does not forcibly kill a synchronous thread already making an HTTP request.</p>
+        <h3>Duplicate and stale commits</h3>
+        <p><span class="file">pipeline/job_store.py</span> rejects duplicate pending/running/complete jobs for the same repo and SHA. A newer SHA becomes the latest; an older completed run is discarded before posting its final result.</p>
+        <h3>Rate limits</h3>
+        <p>Groq retries HTTP 429 and falls back between reasoning and light models. Embeddings retry three times. GitHub requests have timeouts, but no dedicated 429/backoff policy.</p>
+        <h3>Cost controls</h3>
+        <p>Cheaper model for test/documentation, bounded context, token limits, retries, deduplication, timeouts, and repository-scoped retrieval. No explicit dollar budget, token ledger, global concurrency limit, or circuit breaker.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>6. Twenty likely interview questions</summary>
+      <div class="details-body">
+        <p class="q">1. How is the webhook verified?</p>
+        <p class="answer">HMAC-SHA256 over the raw body with <code>hmac.compare_digest</code>; require the <code>sha256=</code> prefix. See <span class="file">api/webhook.py</span>.</p>
+
+        <p class="q">2. Which events are supported?</p>
+        <p class="answer"><code>pull_request.opened</code>, <code>pull_request.synchronize</code>, and pushes to the default branch for re-indexing.</p>
+
+        <p class="q">3. Why return quickly from the webhook?</p>
+        <p class="answer">GitHub delivery requests should not wait for LLM and GitHub API calls. The handler only validates, deduplicates, writes SQLite, and schedules the background task.</p>
+
+        <p class="q">4. How do the agents run in parallel?</p>
+        <p class="answer"><code>asyncio.gather</code> awaits four executor-backed synchronous functions. Files are sequential; agents within one file are concurrent.</p>
+
+        <p class="q">5. What was 4x measured against?</p>
+        <p class="answer">Nothing in this repository. It is a theoretical comparison with sequentially running four independent agents, not a measured claim.</p>
+
+        <p class="q">6. What if an agent times out?</p>
+        <p class="answer">A timeout report with no findings is returned, the other agents continue, and the dashboard receives an error event.</p>
+
+        <p class="q">7. How are duplicate webhooks handled?</p>
+        <p class="answer">Atomic SQLite check by <code>(repo, commit_sha)</code>; pending, running, and complete duplicates are skipped. Failed jobs can retry.</p>
+
+        <p class="q">8. How is a newer commit handled?</p>
+        <p class="answer">The latest SHA is stored per PR. An older run checks <code>is_stale_sha</code> before posting a comment/status.</p>
+
+        <p class="q">9. How are GitHub App tokens obtained?</p>
+        <p class="answer">Sign a nine-minute App JWT, exchange it for an approximately one-hour installation token, cache it, and refresh five minutes before expiry.</p>
+
+        <p class="q">10. How is the human user authenticated?</p>
+        <p class="answer">GitHub OAuth with a random state; the user token identifies the person, and a server-side SQLite session is used by the dashboard.</p>
+
+        <p class="q">11. Who can approve or block?</p>
+        <p class="answer">A valid dashboard session plus GitHub write/admin permission on that repository. The backend checks permission before changing the status.</p>
+
+        <p class="q">12. What determines the final status?</p>
+        <p class="answer">At least one CRITICAL finding means failure; otherwise success. HIGH findings are surfaced but do not automatically block.</p>
+
+        <p class="q">13. Why combine an AST graph and vectors?</p>
+        <p class="answer">The graph gives exact structural relationships; vectors find semantically similar patterns. They complement each other.</p>
+
+        <p class="q">14. How is context bounded?</p>
+        <p class="answer">Retriever output is capped at 8,000 characters, with bounded graph and similarity-result counts. Exact 15K-to-2K improvement is not measured here.</p>
+
+        <p class="q">15. What models are really used?</p>
+        <p class="answer">Groq for all reasoning and synthesis; Hugging Face for embeddings. No Bedrock client exists in this snapshot. See <span class="file">config.py</span> and <span class="file">tools/model_client.py</span>.</p>
+
+        <p class="q">16. How do you handle malformed LLM JSON?</p>
+        <p class="answer">Parse, retry once with a JSON-only instruction, then return an error-bearing report instead of crashing the pipeline.</p>
+
+        <p class="q">17. What if synthesis fails?</p>
+        <p class="answer">A deterministic Markdown fallback lists findings by severity, with locations and suggestions. See <span class="file">pipeline/synthesizer.py</span>.</p>
+
+        <p class="q">18. How are findings deduplicated?</p>
+        <p class="answer">By file, category, and a normalized snippet hash. The strict key favors avoiding false-positive deletion of distinct findings.</p>
+
+        <p class="q">19. What is the test agent’s limitation?</p>
+        <p class="answer">It reasons from the diff and does not fetch the real test suite, so it reports testable risk rather than proving a test is missing.</p>
+
+        <p class="q">20. Is this production-ready on ECS?</p>
+        <p class="answer">Not as shown. SQLite is local, WebSockets are unauthenticated, GitHub 429 handling is incomplete, and Terraform/ECS/Docker/monitoring are absent. I would add a queue, shared datastore, secrets manager, container deployment, health checks, observability, and rate limiting.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>7. What to defend — and what to admit</summary>
+      <div class="details-body">
+        <div class="notice good">
+          <strong>Defend:</strong> fast webhook acknowledgment, raw-body HMAC verification, durable job state, duplicate suppression, stale-commit protection, structured Pydantic findings, hybrid retrieval, repository isolation, and graceful degradation.
+        </div>
+        <h3>Admit clearly</h3>
+        <ul>
+          <li>Bedrock is not implemented; Groq is used.</li>
+          <li>Terraform, ECS/Fargate, Docker, CI/CD, and monitoring are not in this repository.</li>
+          <li>The 4x speedup is not benchmarked.</li>
+          <li>The 15K-to-2K reduction is not instrumented as an experiment.</li>
+          <li>Test coverage analysis does not inspect test files.</li>
+          <li>AST call-graph coverage is mainly Python; JS/TS use vector chunks only.</li>
+          <li>Local SQLite is not a suitable shared store for multiple ECS tasks.</li>
+          <li>WebSocket access currently has no authentication.</li>
+          <li>GitHub API rate-limit handling needs improvement.</li>
+        </ul>
+      </div>
+    </details>
+
+    <section>
+      <h2>Final answer to memorize</h2>
+      <p>
+        “This is a FastAPI GitHub App that verifies signed PR webhooks, deduplicates reviews by commit SHA, and runs four specialized review agents concurrently per changed file. It combines AST call/dependency context with repository-scoped Qdrant similarity search. Findings are structured, deduplicated, ranked, synthesized into a PR comment, and converted into a GitHub status: CRITICAL findings fail the check. React receives live WebSocket progress and supports authenticated human overrides. In this repository, the reasoning provider is Groq and embeddings use Hugging Face; Bedrock, Terraform, ECS/Fargate, CI/CD, and production monitoring are planned or external, not implemented here.”
+      </p>
+    </section>
+
+    <p class="top"><a href="#top">Back to top</a></p>
+  </main>
+</body>
+</html>

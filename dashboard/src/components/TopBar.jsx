@@ -1,4 +1,6 @@
-export default function TopBar({ repo, repoInput, onRepoInputChange, onRepoSubmit, autoRefresh, onToggleAutoRefresh, wsConnected }) {
+import AuthStatus from "./AuthStatus";
+
+export default function TopBar({ repo, repoInput, onRepoInputChange, onRepoSubmit, autoRefresh, onToggleAutoRefresh, wsConnected, user, onLogin, onLogout }) {
   return (
     <header
       style={{
@@ -75,6 +77,8 @@ export default function TopBar({ repo, repoInput, onRepoInputChange, onRepoSubmi
       </label>
 
       <span className="mono" style={{ fontSize: 12, color: "var(--fg-subtle)" }}>{repo}</span>
+
+      <AuthStatus user={user} onLogin={onLogin} onLogout={onLogout} />
     </header>
   );
 }

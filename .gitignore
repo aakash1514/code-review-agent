@@ -45,3 +45,8 @@ github-app-private-key.pem
 review_agent.db
 knowledge_graph.json
 knowledge_graph_aakash1514_code-review-agent-test.json
+review_agent.db-shm
+review_agent.db-wal
+# SQLite runtime files
+*.db-shm
+*.db-wal

@@ -1,19 +1,19 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 import json
+from pipeline.job_store import list_jobs, get_job, set_override, clear_override
+from tools.github_tools import (
+    get_installation_token, get_pr, get_pr_files, get_full_file_content,
+    check_repo_write_permission, set_commit_status,
+)
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
-from pipeline.job_store import list_jobs, get_job
-from tools.github_tools import get_installation_token, get_pr, get_pr_files, get_full_file_content
+from pipeline.hitl_gate import DEFAULT_STATUS_CONTEXT
+from api.auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
 
 @router.get("/reviews")
 def list_reviews(repo: str = Query(..., description="owner/name"), limit: int = 20):
-    """
-    Summary list for the dashboard's landing view. Deliberately lightweight
-    — parses just enough of result_json (when present) to show status at a
-    glance, without shipping the full findings payload for every row.
-    """
     jobs = list_jobs(repo, limit=limit)
     summaries = []
     for job in jobs:
@@ -31,13 +31,13 @@ def list_reviews(repo: str = Query(..., description="owner/name"), limit: int = 
             "created_at": job["created_at"],
             "updated_at": job["updated_at"],
             "error": job["error"],
+            "override_action": job["override_action"],
         })
     return {"repo": repo, "reviews": summaries}
 
 
 @router.get("/reviews/{commit_sha}")
 def get_review(commit_sha: str, repo: str = Query(...)):
-    """Full ReviewReport for one commit — the detail view's data source."""
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")
@@ -48,27 +48,17 @@ def get_review(commit_sha: str, repo: str = Query(...)):
         "pr_number": job["pr_number"],
         "status": job["status"],
         "error": job["error"],
-        "review": result,  # full ReviewReport dict, or null if not complete yet
+        "review": result,
+        "override_action": job["override_action"],
+        "override_by": job["override_by"],
     }
 
 
 @router.get("/reviews/{commit_sha}/files")
 def get_review_files(commit_sha: str, repo: str = Query(...)):
-    """
-    Full original (base) and modified (head) file content per changed file —
-    data source for the dashboard's side-by-side Monaco diff viewer. Fetched
-    live from GitHub each time, not persisted at review time.
-
-    NOTE — known caveat, not a bug: base.sha/head.sha come from the PR's
-    CURRENT state via get_pr, not frozen at commit_sha. If the PR has moved
-    since this commit was reviewed, this may not exactly match what was
-    reviewed. Same spirit as is_stale_sha elsewhere in this project — noted
-    explicitly rather than left as a silent mismatch.
-    """
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")
-
     try:
         token = get_installation_token()
         pr = get_pr(repo, job["pr_number"], token)
@@ -88,7 +78,7 @@ def get_review_files(commit_sha: str, repo: str = Query(...)):
         try:
             original = "" if status == "added" else get_full_file_content(repo, filename, base_sha, token)
         except Exception:
-            original = ""  # e.g. renamed-from path not resolvable, or a transient fetch error
+            original = ""
 
         try:
             modified = "" if status == "removed" else get_full_file_content(repo, filename, head_sha, token)
@@ -105,42 +95,8 @@ def get_review_files(commit_sha: str, repo: str = Query(...)):
     return {"commit_sha": commit_sha, "files": result_files}
 
 
-@router.post("/reviews/{commit_sha}/approve")
-def approve_review(commit_sha: str, repo: str = Query(...)):
-    """
-    NOTE — gap #4, intentionally NOT closed here: this endpoint has NO
-    auth check yet. Anyone who can reach your FastAPI server can call this
-    and flip a PR's status to passing. This is fine for local/ngrok testing
-    where only you can reach it, but this must NOT go to production without
-    GitHub OAuth login + write-access verification wired in first — that's
-    the real gap #4 fix, deliberately deferred until the frontend/auth flow
-    is being built, not silently skipped.
-    """
-    job = get_job(repo, commit_sha)
-    if job is None:
-        raise HTTPException(status_code=404, detail="review not found")
-    # TODO: actually call tools.github_tools.set_commit_status(..., "success", ...)
-    # once this endpoint is auth-gated. Left as a stub for now on purpose.
-    return {"status": "not_implemented", "reason": "gap #4: auth required before this can act for real"}
-
-
-@router.post("/reviews/{commit_sha}/block")
-def block_review(commit_sha: str, repo: str = Query(...)):
-    """Same gap #4 caveat as approve_review above."""
-    job = get_job(repo, commit_sha)
-    if job is None:
-        raise HTTPException(status_code=404, detail="review not found")
-    return {"status": "not_implemented", "reason": "gap #4: auth required before this can act for real"}
-
 @router.get("/graph")
 def get_graph(repo: str = Query(...)):
-    """
-    Full call graph for the repo's most recently indexed knowledge graph.
-    NOT scoped to a specific commit/review — the KG is repo-wide and only
-    updates when scripts/index_repo.py is manually re-run (gap #6, still not
-    started). The frontend combines this with the currently open review's
-    findings client-side to highlight relevant nodes.
-    """
     kg = KnowledgeGraph()
     try:
         kg.load(kg_path_for_repo(repo))
@@ -156,7 +112,71 @@ def get_graph(repo: str = Query(...)):
     edges = []
     for key, node in kg.nodes.items():
         for called in node.calls:
-            if called in kg.nodes:  # guard against dangling refs
+            if called in kg.nodes:
                 edges.append({"source": key, "target": called})
 
     return {"repo": repo, "nodes": nodes, "edges": edges}
+
+
+@router.post("/reviews/{commit_sha}/approve")
+def approve_review(commit_sha: str, repo: str = Query(...), user: dict = Depends(get_current_user)):
+    """
+    gap #4 CLOSED: requires a valid dashboard session (get_current_user) AND
+    verifies the logged-in GitHub user actually has write access to THIS
+    repo (via the App's own installation token, not the user's OAuth token —
+    see check_repo_write_permission's docstring) before touching anything.
+    Only then does it call set_commit_status for real.
+    """
+    job = get_job(repo, commit_sha)
+    if job is None:
+        raise HTTPException(status_code=404, detail="review not found")
+
+    login = user["github_login"]
+    token = get_installation_token()
+    if not check_repo_write_permission(repo, login, token=token):
+        raise HTTPException(status_code=403, detail=f"@{login} does not have write access to {repo}")
+
+    set_commit_status(
+        repo, commit_sha, "success", f"Manually approved by @{login}",
+        context=DEFAULT_STATUS_CONTEXT, token=token,
+    )
+    set_override(repo, commit_sha, "approved", login)
+    return {"status": "approved", "by": login}
+
+
+@router.post("/reviews/{commit_sha}/block")
+def block_review(commit_sha: str, repo: str = Query(...), user: dict = Depends(get_current_user)):
+    """Same auth/permission gate as approve_review above."""
+    job = get_job(repo, commit_sha)
+    if job is None:
+        raise HTTPException(status_code=404, detail="review not found")
+
+    login = user["github_login"]
+    token = get_installation_token()
+    if not check_repo_write_permission(repo, login, token=token):
+        raise HTTPException(status_code=403, detail=f"@{login} does not have write access to {repo}")
+
+    set_commit_status(
+        repo, commit_sha, "failure", f"Manually blocked by @{login}",
+        context=DEFAULT_STATUS_CONTEXT, token=token,
+    )
+    set_override(repo, commit_sha, "blocked", login)
+    return {"status": "blocked", "by": login}
+
+
+@router.post("/reviews/{commit_sha}/clear-override")
+def clear_review_override(commit_sha: str, repo: str = Query(...), user: dict = Depends(get_current_user)):
+    """Backs 'Change decision' in the dashboard — same auth gate as
+    approve/block, since undoing a decision is itself a repo-write-adjacent
+    action worth gating the same way."""
+    job = get_job(repo, commit_sha)
+    if job is None:
+        raise HTTPException(status_code=404, detail="review not found")
+
+    login = user["github_login"]
+    token = get_installation_token()
+    if not check_repo_write_permission(repo, login, token=token):
+        raise HTTPException(status_code=403, detail=f"@{login} does not have write access to {repo}")
+
+    clear_override(repo, commit_sha)
+    return {"status": "cleared"}

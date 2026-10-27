@@ -190,3 +190,67 @@ def get_repo_tree(repo: str, ref: str, token: str | None = None) -> list[dict]:
     resp.raise_for_status()
     data = resp.json()
     return [item for item in data.get("tree", []) if item.get("type") == "blob"]
+
+def exchange_oauth_code(code: str) -> str:
+    """
+    Trades a GitHub OAuth 'code' (from the /auth/callback redirect) for a
+    user access token. This identifies the HUMAN logged into the dashboard —
+    completely separate from the App's own installation token used
+    everywhere else in this file. Uses the App's OAuth Client ID/Secret
+    (same App, different credential pair — every GitHub App gets these for
+    free on its General settings page).
+    """
+    resp = requests.post(
+        "https://github.com/login/oauth/access_token",
+        headers={"Accept": "application/json"},
+        data={
+            "client_id": settings.GITHUB_OAUTH_CLIENT_ID,
+            "client_secret": settings.GITHUB_OAUTH_CLIENT_SECRET,
+            "code": code,
+            "redirect_uri": settings.GITHUB_OAUTH_REDIRECT_URI,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise ValueError(f"OAuth exchange failed: {data.get('error_description', data['error'])}")
+    return data["access_token"]
+
+
+def get_authenticated_user(user_token: str) -> dict:
+    """Identity check for a user's OAuth token — returns their GitHub login
+    and avatar. Uses the USER's token (Bearer), not the App's installation
+    token — different credential, different purpose."""
+    resp = requests.get(
+        f"{GITHUB_API_BASE}/user",
+        headers={"Authorization": f"Bearer {user_token}", "Accept": "application/vnd.github+json"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return {"login": data["login"], "avatar_url": data.get("avatar_url", "")}
+
+
+def check_repo_write_permission(repo: str, username: str, token: str | None = None) -> bool:
+    """
+    Checks whether `username` has write (or admin) access to `repo`, using
+    the APP's installation token (not the user's own OAuth token) — this
+    deliberately avoids ever needing the user's personal OAuth token to hold
+    broad 'repo' scope; the App already has legitimate read access to the
+    repo, and GitHub's collaborator-permission endpoint accepts any
+    sufficiently-privileged token to check ANY username's permission level,
+    not just the token owner's own. Used to gate the dashboard's
+    Approve/Block actions (gap #4) to people who could actually merge on
+    GitHub anyway.
+    """
+    resp = requests.get(
+        f"{GITHUB_API_BASE}/repos/{repo}/collaborators/{username}/permission",
+        headers=_auth_headers(token),
+        timeout=30,
+    )
+    if resp.status_code == 404:
+        return False  # not a collaborator at all
+    resp.raise_for_status()
+    permission = resp.json().get("permission", "none")
+    return permission in ("write", "admin")

@@ -52,6 +52,9 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'pending',
                 result_json TEXT,
                 error TEXT,
+                override_action TEXT,
+                override_by TEXT,
+                override_at REAL,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
                 UNIQUE(repo, commit_sha)
@@ -66,6 +69,9 @@ def init_db() -> None:
                 PRIMARY KEY (repo, pr_number)
             )
         """)
+        _add_column_if_missing(conn, "review_jobs", "override_action", "TEXT")
+        _add_column_if_missing(conn, "review_jobs", "override_by", "TEXT")
+        _add_column_if_missing(conn, "review_jobs", "override_at", "REAL")
 
 
 def create_job(repo: str, pr_number: int, commit_sha: str) -> None:
@@ -133,6 +139,18 @@ def try_start_job(repo: str, pr_number: int, commit_sha: str) -> bool:
         """, (repo, pr_number, commit_sha, now))
         return True
 
+def _add_column_if_missing(conn, table: str, column: str, coldef: str) -> None:
+    """
+    Lightweight schema migration, no external migration tool needed (matches
+    this project's existing no-ORM/no-Alembic approach). CREATE TABLE IF NOT
+    EXISTS only helps on a brand-new database — an existing review_agent.db
+    from before this change won't get new columns automatically, so this
+    checks PRAGMA table_info and ALTERs only if the column is genuinely
+    missing. Safe to call on every startup.
+    """
+    cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
 
 def list_jobs(repo: str, limit: int = 20) -> list[dict]:
     """Most recent jobs for a repo, newest first — powers the dashboard's
@@ -152,6 +170,25 @@ def update_status(repo: str, commit_sha: str, status: str, error: str | None = N
             WHERE repo = ? AND commit_sha = ?
         """, (status, error, time.time(), repo, commit_sha))
 
+def set_override(repo: str, commit_sha: str, action: str, by: str) -> None:
+    """Records a manual approve/block decision made via the dashboard (gap
+    #4). Purely a record of intent/history — does NOT touch status/
+    result_json, which stay driven by the actual pipeline run."""
+    assert action in ("approved", "blocked"), f"invalid override action: {action}"
+    with _connect() as conn:
+        conn.execute("""
+            UPDATE review_jobs SET override_action = ?, override_by = ?, override_at = ?
+            WHERE repo = ? AND commit_sha = ?
+        """, (action, by, time.time(), repo, commit_sha))
+
+
+def clear_override(repo: str, commit_sha: str) -> None:
+    """Reverses set_override — used by the dashboard's 'Change decision' action."""
+    with _connect() as conn:
+        conn.execute("""
+            UPDATE review_jobs SET override_action = NULL, override_by = NULL, override_at = NULL
+            WHERE repo = ? AND commit_sha = ?
+        """, (repo, commit_sha))
 
 def save_result(repo: str, commit_sha: str, review_report_json: str) -> None:
     """

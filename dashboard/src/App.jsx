@@ -3,7 +3,7 @@ import TopBar from "./components/TopBar";
 import ReviewList from "./components/ReviewList";
 import ReviewDetail from "./components/ReviewDetail";
 import RepoGraphView from "./components/RepoGraphView";
-import { fetchReviews, fetchReview } from "./api";
+import { fetchReviews, fetchReview, fetchMe, loginUrl, logout as apiLogout, setStoredSessionToken } from "./api";
 import { useReviewSocket } from "./hooks/useReviewSocket";
 
 const DEFAULT_REPO = "aakash1514/code-review-agent-test";
@@ -30,6 +30,33 @@ export default function App() {
 
   const [eventsByCommit, setEventsByCommit] = useState({});
   const listRefreshTimer = useRef(null);
+
+  const [user, setUser] = useState(null);
+
+  // Pick up ?session=<id> from the OAuth callback redirect, persist it, and
+  // strip it from the URL so a page refresh doesn't re-process a stale
+  // query param. Runs once on mount; also handles the "already had a valid
+  // session from a previous visit" case via fetchMe()'s stored-token fallback.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sessionFromUrl = params.get("session");
+    if (sessionFromUrl) {
+      setStoredSessionToken(sessionFromUrl);
+      params.delete("session");
+      const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "");
+      window.history.replaceState({}, "", cleanUrl);
+    }
+    fetchMe().then(setUser);
+  }, []);
+
+  function handleLogin() {
+    window.location.href = loginUrl();
+  }
+
+  async function handleLogout() {
+    await apiLogout();
+    setUser(null);
+  }
 
   const loadList = useCallback(async (currentRepo) => {
     try {
@@ -124,8 +151,10 @@ export default function App() {
         autoRefresh={autoRefresh}
         onToggleAutoRefresh={() => setAutoRefresh((v) => !v)}
         wsConnected={wsConnected}
+        user={user}
+        onLogin={handleLogin}
+        onLogout={handleLogout}
       />
-
       <div
         style={{
           display: "flex",
@@ -159,6 +188,8 @@ export default function App() {
               job={selectedJob}
               onActionComplete={() => loadList(repo)}
               liveEvents={selectedSha ? eventsByCommit[selectedSha] ?? [] : []}
+              currentUser={user}
+              onLogin={handleLogin}
             />
           </div>
         </div>

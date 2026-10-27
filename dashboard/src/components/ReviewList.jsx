@@ -80,6 +80,16 @@ export default function ReviewList({ reviews, selectedSha, onSelect, loading, er
                 </Badge>
               </div>
             )}
+            {review.override_action && (
+              <div style={{ marginTop: 6 }}>
+                <Badge
+                  fg={review.override_action === "approved" ? "var(--success)" : "var(--danger)"}
+                  bg={review.override_action === "approved" ? "var(--success-subtle)" : "var(--danger-subtle)"}
+                >
+                  {review.override_action === "approved" ? "✓ Manually approved" : "✕ Manually blocked"}
+                </Badge>
+              </div>
+            )}
             {review.error && (
               <div style={{ marginTop: 6, fontSize: 12, color: "var(--danger)" }}>{review.error}</div>
             )}

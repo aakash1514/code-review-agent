@@ -6,7 +6,7 @@ import LiveProgress from "./LiveProgress";
 import DiffViewer from "./DiffViewer";
 import CallGraph from "./CallGraph";
 import { SEVERITY_ORDER, SEVERITY_META, JOB_STATUS_META, shortSha } from "../constants";
-import { approveReview, blockReview, fetchReviewFiles, fetchGraph } from "../api";
+import { approveReview, blockReview, clearOverride, fetchReviewFiles, fetchGraph } from "../api";
 
 function VerdictBanner({ review }) {
   const critical = review.critical_count ?? 0;
@@ -63,8 +63,10 @@ function TabButton({ active, onClick, children }) {
   );
 }
 
-export default function ReviewDetail({ repo, job, onActionComplete, liveEvents = [] }) {
+export default function ReviewDetail({ repo, job, onActionComplete, liveEvents = [], currentUser, onLogin }) {
   const [actionState, setActionState] = useState({ loading: false, message: null });
+  const [resolution, setResolution] = useState(null); // { action: "approved"|"blocked", by: string } | null
+  const [clearing, setClearing] = useState(false);
   const [tab, setTab] = useState("findings");
   const [files, setFiles] = useState(null);
   const [filesLoading, setFilesLoading] = useState(false);
@@ -83,7 +85,12 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
     setFiles(null);
     setFilesError(null);
     setJumpTarget(null);
-  }, [job?.commit_sha]);
+    // Restore a persisted decision from the backend (survives reloads),
+    // rather than always starting blank — this is the actual point of
+    // persisting override_action/override_by server-side.
+    setResolution(job?.override_action ? { action: job.override_action, by: job.override_by } : null);
+    setActionState({ loading: false, message: null });
+  }, [job?.commit_sha, job?.override_action, job?.override_by]);
 
   useEffect(() => {
     if (tab !== "callgraph") return;
@@ -154,7 +161,12 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
     const fn = kind === "approve" ? approveReview : blockReview;
     try {
       const result = await fn(repo, job.commit_sha);
-      setActionState({ loading: false, message: result.reason || result.status });
+      if (result.status === "approved" || result.status === "blocked") {
+        setResolution({ action: result.status, by: result.by });
+        setActionState({ loading: false, message: null });
+      } else {
+        setActionState({ loading: false, message: result.detail || result.reason || JSON.stringify(result) });
+      }
       onActionComplete?.();
     } catch (e) {
       setActionState({ loading: false, message: `Action failed: ${e.message}` });
@@ -170,6 +182,19 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
     if (!files?.some((f) => f.filename === file)) return; // not part of this PR's diff — nothing to show
     setTab("code");
     setJumpTarget({ file, lineStart: 1, key: Date.now() });
+  }
+
+  async function handleClearOverride() {
+    setClearing(true);
+    try {
+      await clearOverride(repo, job.commit_sha);
+      setResolution(null);
+      onActionComplete?.();
+    } catch (e) {
+      setActionState({ loading: false, message: `Couldn't clear decision: ${e.message}` });
+    } finally {
+      setClearing(false);
+    }
   }
 
   const grouped = SEVERITY_ORDER.map((sev) => ({
@@ -323,23 +348,77 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
                 </details>
               )}
 
-              <div style={{ display: "flex", gap: 8, alignItems: "center", paddingTop: 8, borderTop: "1px solid var(--border-muted)" }}>
-                <button
-                  onClick={() => handleAction("approve")}
-                  disabled={actionState.loading}
-                  style={buttonStyle("var(--success)")}
-                >
-                  Approve
-                </button>
-                <button
-                  onClick={() => handleAction("block")}
-                  disabled={actionState.loading}
-                  style={buttonStyle("var(--danger)")}
-                >
-                  Block
-                </button>
-                {actionState.message && (
-                  <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>{actionState.message}</span>
+              <div style={{ paddingTop: 8, borderTop: "1px solid var(--border-muted)" }}>
+                {resolution ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 14px",
+                      borderRadius: "var(--radius)",
+                      background: resolution.action === "approved" ? "var(--success-subtle)" : "var(--danger-subtle)",
+                      color: resolution.action === "approved" ? "var(--success-emphasis)" : "var(--danger-emphasis)",
+                      fontSize: 13,
+                      fontWeight: 600,
+                    }}
+                  >
+                    <span style={{ fontSize: 15 }}>{resolution.action === "approved" ? "✓" : "✕"}</span>
+                    <span>
+                      {resolution.action === "approved" ? "Approved" : "Blocked"} by @{resolution.by}
+                    </span>
+                    <button
+                      onClick={handleClearOverride}
+                      disabled={clearing}
+                      style={{
+                        marginLeft: "auto",
+                        border: "none",
+                        background: "none",
+                        color: "inherit",
+                        fontSize: 12,
+                        fontWeight: 500,
+                        textDecoration: "underline",
+                        cursor: clearing ? "default" : "pointer",
+                        opacity: clearing ? 0.6 : 0.85,
+                      }}
+                    >
+                      {clearing ? "Clearing…" : "Change decision"}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {currentUser ? (
+                      <>
+                        <button
+                          onClick={() => handleAction("approve")}
+                          disabled={actionState.loading}
+                          style={buttonStyle("var(--success)")}
+                        >
+                          {actionState.loading ? "Working…" : "Approve"}
+                        </button>
+                        <button
+                          onClick={() => handleAction("block")}
+                          disabled={actionState.loading}
+                          style={buttonStyle("var(--danger)")}
+                        >
+                          {actionState.loading ? "Working…" : "Block"}
+                        </button>
+                        {actionState.message && (
+                          <span style={{ fontSize: 12, color: "var(--danger)" }}>{actionState.message}</span>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+                        <button
+                          onClick={onLogin}
+                          style={{ border: "none", background: "none", color: "var(--accent)", cursor: "pointer", padding: 0, fontSize: 12, textDecoration: "underline" }}
+                        >
+                          Sign in
+                        </button>{" "}
+                        to approve or block this PR.
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </>

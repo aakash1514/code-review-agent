@@ -428,6 +428,20 @@
     ],
     "class_name": null
   },
+  "api/webhook.py::_run_reindex_task": {
+    "fn_key": "api/webhook.py::_run_reindex_task",
+    "name": "_run_reindex_task",
+    "file_path": "api/webhook.py",
+    "calls": [
+      "tools/github_tools.py::get_installation_token",
+      "pipeline/reindexer.py::rebuild_index_for_repo"
+    ],
+    "called_by": [],
+    "imports": [
+      "hashlib"
+    ],
+    "class_name": null
+  },
   "api/webhook.py::reviews_ws": {
     "fn_key": "api/webhook.py::reviews_ws",
     "name": "reviews_ws",
@@ -808,6 +822,81 @@
     ],
     "class_name": null
   },
+  "pipeline/reindexer.py::_is_excluded": {
+    "fn_key": "pipeline/reindexer.py::_is_excluded",
+    "name": "_is_excluded",
+    "file_path": "pipeline/reindexer.py",
+    "calls": [],
+    "called_by": [
+      "pipeline/reindexer.py::_fetch_repo_snapshot"
+    ],
+    "imports": [
+      "os",
+      "shutil",
+      "tempfile"
+    ],
+    "class_name": null
+  },
+  "pipeline/reindexer.py::_fetch_repo_snapshot": {
+    "fn_key": "pipeline/reindexer.py::_fetch_repo_snapshot",
+    "name": "_fetch_repo_snapshot",
+    "file_path": "pipeline/reindexer.py",
+    "calls": [
+      "tools/github_tools.py::get_repo_tree",
+      "pipeline/reindexer.py::_is_excluded",
+      "tools/github_tools.py::get_full_file_content"
+    ],
+    "called_by": [
+      "pipeline/reindexer.py::rebuild_index_for_repo"
+    ],
+    "imports": [
+      "os",
+      "shutil",
+      "tempfile"
+    ],
+    "class_name": null
+  },
+  "pipeline/reindexer.py::index_repo_from_local_path": {
+    "fn_key": "pipeline/reindexer.py::index_repo_from_local_path",
+    "name": "index_repo_from_local_path",
+    "file_path": "pipeline/reindexer.py",
+    "calls": [
+      "rag/knowledge_graph.py::build_from_repo",
+      "rag/knowledge_graph.py::save",
+      "rag/indexer.py::delete_repo",
+      "rag/indexer.py::index_chunks",
+      "rag/knowledge_graph.py::kg_path_for_repo",
+      "rag/chunker.py::chunk_file"
+    ],
+    "called_by": [
+      "pipeline/reindexer.py::rebuild_index_for_repo",
+      "scripts/index_repo.py::main"
+    ],
+    "imports": [
+      "os",
+      "shutil",
+      "tempfile"
+    ],
+    "class_name": null
+  },
+  "pipeline/reindexer.py::rebuild_index_for_repo": {
+    "fn_key": "pipeline/reindexer.py::rebuild_index_for_repo",
+    "name": "rebuild_index_for_repo",
+    "file_path": "pipeline/reindexer.py",
+    "calls": [
+      "pipeline/reindexer.py::_fetch_repo_snapshot",
+      "pipeline/reindexer.py::index_repo_from_local_path"
+    ],
+    "called_by": [
+      "api/webhook.py::_run_reindex_task"
+    ],
+    "imports": [
+      "os",
+      "shutil",
+      "tempfile"
+    ],
+    "class_name": null
+  },
   "pipeline/runner.py::run_agents_parallel": {
     "fn_key": "pipeline/runner.py::run_agents_parallel",
     "name": "run_agents_parallel",
@@ -1072,7 +1161,7 @@
       "rag/chunker.py::chunk_python_file"
     ],
     "called_by": [
-      "scripts/index_repo.py::main"
+      "pipeline/reindexer.py::index_repo_from_local_path"
     ],
     "imports": [
       "ast"
@@ -1129,7 +1218,8 @@
     "file_path": "rag/indexer.py",
     "calls": [],
     "called_by": [
-      "rag/indexer.py::index_chunks"
+      "rag/indexer.py::index_chunks",
+      "rag/indexer.py::delete_repo"
     ],
     "imports": [
       "time",
@@ -1148,7 +1238,7 @@
       "rag/indexer.py::_stable_point_id"
     ],
     "called_by": [
-      "scripts/index_repo.py::main"
+      "pipeline/reindexer.py::index_repo_from_local_path"
     ],
     "imports": [
       "time",
@@ -1177,6 +1267,23 @@
     ],
     "class_name": "CodebaseIndexer"
   },
+  "rag/indexer.py::delete_repo": {
+    "fn_key": "rag/indexer.py::delete_repo",
+    "name": "delete_repo",
+    "file_path": "rag/indexer.py",
+    "calls": [
+      "rag/indexer.py::ensure_collection"
+    ],
+    "called_by": [
+      "pipeline/reindexer.py::index_repo_from_local_path"
+    ],
+    "imports": [
+      "time",
+      "hashlib",
+      "numpy"
+    ],
+    "class_name": "CodebaseIndexer"
+  },
   "rag/knowledge_graph.py::kg_path_for_repo": {
     "fn_key": "rag/knowledge_graph.py::kg_path_for_repo",
     "name": "kg_path_for_repo",
@@ -1185,6 +1292,7 @@
     "called_by": [
       "api/dashboard.py::get_graph",
       "api/webhook.py::_load_retriever",
+      "pipeline/reindexer.py::index_repo_from_local_path",
       "scripts/index_repo.py::main"
     ],
     "imports": [
@@ -1218,7 +1326,7 @@
       "rag/knowledge_graph.py::_extract_calls"
     ],
     "called_by": [
-      "scripts/index_repo.py::main"
+      "pipeline/reindexer.py::index_repo_from_local_path"
     ],
     "imports": [
       "ast",
@@ -1403,7 +1511,7 @@
     "file_path": "rag/knowledge_graph.py",
     "calls": [],
     "called_by": [
-      "scripts/index_repo.py::main"
+      "pipeline/reindexer.py::index_repo_from_local_path"
     ],
     "imports": [
       "ast",
@@ -1471,16 +1579,12 @@
     "name": "main",
     "file_path": "scripts/index_repo.py",
     "calls": [
-      "rag/knowledge_graph.py::build_from_repo",
-      "rag/knowledge_graph.py::save",
-      "rag/indexer.py::index_chunks",
-      "rag/knowledge_graph.py::kg_path_for_repo",
-      "rag/chunker.py::chunk_file"
+      "pipeline/reindexer.py::index_repo_from_local_path",
+      "rag/knowledge_graph.py::kg_path_for_repo"
     ],
     "called_by": [],
     "imports": [
-      "argparse",
-      "os"
+      "argparse"
     ],
     "class_name": null
   },
@@ -1575,6 +1679,7 @@
     ],
     "called_by": [
       "api/dashboard.py::get_review_files",
+      "api/webhook.py::_run_reindex_task",
       "api/webhook.py::run_review_pipeline",
       "api/webhook.py::run_review_pipeline",
       "tools/github_tools.py::_auth_headers"
@@ -1600,7 +1705,8 @@
       "tools/github_tools.py::post_pr_review",
       "tools/github_tools.py::set_commit_status",
       "tools/github_tools.py::get_full_file_content",
-      "tools/github_tools.py::get_pr"
+      "tools/github_tools.py::get_pr",
+      "tools/github_tools.py::get_repo_tree"
     ],
     "imports": [
       "time",
@@ -1694,7 +1800,8 @@
     ],
     "called_by": [
       "api/dashboard.py::get_review_files",
-      "api/dashboard.py::get_review_files"
+      "api/dashboard.py::get_review_files",
+      "pipeline/reindexer.py::_fetch_repo_snapshot"
     ],
     "imports": [
       "time",
@@ -1713,6 +1820,24 @@
     ],
     "called_by": [
       "api/dashboard.py::get_review_files"
+    ],
+    "imports": [
+      "time",
+      "base64",
+      "jwt",
+      "requests"
+    ],
+    "class_name": null
+  },
+  "tools/github_tools.py::get_repo_tree": {
+    "fn_key": "tools/github_tools.py::get_repo_tree",
+    "name": "get_repo_tree",
+    "file_path": "tools/github_tools.py",
+    "calls": [
+      "tools/github_tools.py::_auth_headers"
+    ],
+    "called_by": [
+      "pipeline/reindexer.py::_fetch_repo_snapshot"
     ],
     "imports": [
       "time",

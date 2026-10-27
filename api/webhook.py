@@ -16,12 +16,15 @@ from rag.indexer import CodebaseIndexer
 from rag.retriever import SmartRetriever
 from api.dashboard import router as dashboard_router
 from api.ws_manager import manager
+from api.auth import router as auth_router
+from pipeline.session_store import init_session_db
 
 HANDLED_ACTIONS = {"opened", "synchronize"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    init_session_db()
     swept = sweep_stuck_jobs()
     if swept:
         print(f"[startup] swept {swept} stuck job(s) from a previous run")
@@ -30,6 +33,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(dashboard_router)
+app.include_router(auth_router)
 
 
 def _verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
