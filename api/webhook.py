@@ -17,7 +17,8 @@ from rag.retriever import SmartRetriever
 from api.dashboard import router as dashboard_router
 from api.ws_manager import manager
 from api.auth import router as auth_router
-from pipeline.session_store import init_session_db
+from pipeline.session_store import init_session_db, purge_expired_ws_tickets, consume_ws_ticket
+from starlette.concurrency import run_in_threadpool
 
 HANDLED_ACTIONS = {"opened", "synchronize"}
 
@@ -25,6 +26,9 @@ HANDLED_ACTIONS = {"opened", "synchronize"}
 async def lifespan(app: FastAPI):
     init_db()
     init_session_db()
+    purged = purge_expired_ws_tickets()
+    if purged:
+        print(f"[startup] purged {purged} expired WebSocket ticket(s)")
     swept = sweep_stuck_jobs()
     if swept:
         print(f"[startup] swept {swept} stuck job(s) from a previous run")
@@ -70,10 +74,16 @@ def _run_reindex_task(repo: str, ref: str) -> None:
         print(f"[reindex] FAILED for {repo}@{ref[:7]}: {type(e).__name__}: {e}")
 
 @app.websocket("/ws/reviews")
-async def reviews_ws(websocket: WebSocket, repo: str):
-    """Dashboard connects here per-repo (?repo=owner/name) and receives every
-    pipeline progress event for reviews running against that repo. No auth —
-    same trust boundary as the rest of the dashboard API for now (gap #4)."""
+async def reviews_ws(websocket: WebSocket, repo: str, ticket: str | None = None):
+    """Dashboard connects here per-repo (?repo=owner/name&ticket=...) and
+    receives every pipeline progress event for reviews running against that
+    repo. The ticket comes from POST /api/ws-ticket, which already checked
+    the session and repo read access; it's single-use and bound to this repo.
+    Closing before accept makes the handshake fail with HTTP 403."""
+    login = await run_in_threadpool(consume_ws_ticket, ticket, repo) if ticket else None
+    if login is None:
+        await websocket.close(code=1008)
+        return
     await manager.connect(repo, websocket)
     try:
         while True:

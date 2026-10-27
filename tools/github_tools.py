@@ -254,3 +254,33 @@ def check_repo_write_permission(repo: str, username: str, token: str | None = No
     resp.raise_for_status()
     permission = resp.json().get("permission", "none")
     return permission in ("write", "admin")
+
+
+def check_repo_read_permission(repo: str, username: str, token: str | None = None) -> bool:
+    """Read-level counterpart of check_repo_write_permission — same endpoint,
+    same installation-token approach. Gates the dashboard's read routes
+    (reviews, diff source, call graph, live socket) on private repos."""
+    resp = requests.get(
+        f"{GITHUB_API_BASE}/repos/{repo}/collaborators/{username}/permission",
+        headers=_auth_headers(token),
+        timeout=30,
+    )
+    if resp.status_code == 404:
+        return False
+    resp.raise_for_status()
+    permission = resp.json().get("permission", "none")
+    return permission in ("read", "write", "admin")
+
+
+def is_repo_private(repo: str, token: str | None = None) -> bool:
+    """True if `repo` is private. A 404 (repo doesn't exist, or the App isn't
+    installed on it) is treated as private so callers fail closed."""
+    resp = requests.get(
+        f"{GITHUB_API_BASE}/repos/{repo}",
+        headers=_auth_headers(token),
+        timeout=30,
+    )
+    if resp.status_code == 404:
+        return True
+    resp.raise_for_status()
+    return bool(resp.json().get("private", True))

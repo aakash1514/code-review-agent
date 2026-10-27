@@ -120,20 +120,25 @@ dashboard/   React + Vite frontend
 | Method | Route | Purpose | Login required |
 | --- | --- | --- | --- |
 | POST | `/webhook` | GitHub App webhook receiver (HMAC-verified) | No |
-| WS | `/ws/reviews?repo=owner/name` | Live review progress | No |
-| GET | `/api/reviews?repo=owner/name` | List reviews | No |
-| GET | `/api/reviews/{commit_sha}?repo=owner/name` | Review detail | No |
-| GET | `/api/reviews/{commit_sha}/files?repo=owner/name` | Changed files for the diff viewer | No |
-| POST | `/api/reviews/{commit_sha}/approve?repo=owner/name` | Human override: approve | Yes |
-| POST | `/api/reviews/{commit_sha}/block?repo=owner/name` | Human override: block | Yes |
-| POST | `/api/reviews/{commit_sha}/clear-override?repo=owner/name` | Remove a human override | Yes |
-| GET | `/api/graph?repo=owner/name` | Call graph for the dashboard | No |
+| WS | `/ws/reviews?repo=owner/name&ticket=<ticket>` | Live review progress | Ticket (see below) |
+| GET | `/api/reviews?repo=owner/name` | List reviews | Yes + read access |
+| GET | `/api/reviews/{commit_sha}?repo=owner/name` | Review detail | Yes + read access |
+| GET | `/api/reviews/{commit_sha}/files?repo=owner/name` | Changed files for the diff viewer | Yes + read access |
+| POST | `/api/reviews/{commit_sha}/approve?repo=owner/name` | Human override: approve | Yes + write access |
+| POST | `/api/reviews/{commit_sha}/block?repo=owner/name` | Human override: block | Yes + write access |
+| POST | `/api/reviews/{commit_sha}/clear-override?repo=owner/name` | Remove a human override | Yes + write access |
+| GET | `/api/graph?repo=owner/name` | Call graph for the dashboard | Yes + read access |
+| POST | `/api/ws-ticket?repo=owner/name` | Issue a single-use ticket for the WebSocket | Yes + read access |
 | GET | `/auth/login` | Redirect to GitHub OAuth consent | No |
 | GET | `/auth/callback` | OAuth callback; creates a session and redirects to the dashboard | No |
 | GET | `/auth/me` | Current user's login and avatar | Yes |
 | POST | `/auth/logout` | End the current session | No |
 
-Routes marked "Login required" expect an `Authorization: Bearer <session_id>` header. The session ID comes from the OAuth login flow. The override routes also check that the user has write access to the repo.
+Routes marked "Yes" expect an `Authorization: Bearer <session_id>` header. The session ID comes from the OAuth login flow. Without a valid session they return `401`.
+
+- **Read access** means the signed-in GitHub user can read the repo: any signed-in user for a public repo, or a collaborator with read access or higher (including org and team access) for a private one. Otherwise the route returns `403`. Allowed checks and repo visibility are cached in-process for 5 minutes, so removing someone's access takes up to 5 minutes to apply here. Denials are not cached.
+- **Write access** is checked on every request for the override routes.
+- **WebSocket:** browsers can't send an `Authorization` header on a WebSocket, so the dashboard first calls `POST /api/ws-ticket` and then connects with `?ticket=`. A ticket is valid for 30 seconds, works once, and only for the repo it was issued for. Otherwise the handshake is rejected with `403`. Access is checked when the socket opens; an already open socket isn't closed on logout.
 
 ## Engineering notes
 

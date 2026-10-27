@@ -3,7 +3,10 @@ import TopBar from "./components/TopBar";
 import ReviewList from "./components/ReviewList";
 import ReviewDetail from "./components/ReviewDetail";
 import RepoGraphView from "./components/RepoGraphView";
-import { fetchReviews, fetchReview, fetchMe, loginUrl, logout as apiLogout, setStoredSessionToken } from "./api";
+import SignInPrompt from "./components/SignInPrompt";
+import {
+  fetchReviews, fetchReview, fetchMe, loginUrl, logout as apiLogout, setStoredSessionToken, onAuthRequired,
+} from "./api";
 import { useReviewSocket } from "./hooks/useReviewSocket";
 
 const DEFAULT_REPO = "aakash1514/code-review-agent-test";
@@ -32,6 +35,11 @@ export default function App() {
   const listRefreshTimer = useRef(null);
 
   const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  // Set when the API answers 403 for this repo (signed in, but no read access).
+  const [accessDenied, setAccessDenied] = useState(false);
+  const signedIn = Boolean(user);
+  const canLoad = signedIn && !accessDenied;
 
   // Pick up ?session=<id> from the OAuth callback redirect, persist it, and
   // strip it from the URL so a page refresh doesn't re-process a stale
@@ -46,8 +54,26 @@ export default function App() {
       const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "");
       window.history.replaceState({}, "", cleanUrl);
     }
-    fetchMe().then(setUser);
+    fetchMe()
+      .catch(() => null)
+      .then((me) => {
+        setUser(me);
+        setAuthChecked(true);
+      });
   }, []);
+
+  // Any 401 from the API (expired/revoked session) drops back to the sign-in prompt.
+  useEffect(() => onAuthRequired(() => setUser(null)), []);
+
+  function resetRepoState() {
+    setReviews([]);
+    setListLoading(true);
+    setListError(null);
+    setSelectedSha(null);
+    setSelectedJob(null);
+    setEventsByCommit({});
+    setAccessDenied(false);
+  }
 
   function handleLogin() {
     window.location.href = loginUrl();
@@ -56,6 +82,7 @@ export default function App() {
   async function handleLogout() {
     await apiLogout();
     setUser(null);
+    resetRepoState();
   }
 
   const loadList = useCallback((currentRepo) => {
@@ -65,6 +92,7 @@ export default function App() {
         setListError(null);
       })
       .catch((e) => {
+        if (e.status === 403) setAccessDenied(true);
         setListError(e.message);
       })
       .finally(() => {
@@ -82,10 +110,10 @@ export default function App() {
     }
   }, []);
 
-  // initial + repo-change load (per-repo state is reset in handleRepoSubmit)
+  // initial + repo-change + post-login load (per-repo state is reset in handleRepoSubmit)
   useEffect(() => {
-    loadList(repo);
-  }, [repo, loadList]);
+    if (signedIn) loadList(repo);
+  }, [repo, signedIn, loadList]);
 
   function scheduleListRefresh() {
     clearTimeout(listRefreshTimer.current);
@@ -115,18 +143,21 @@ export default function App() {
     }
   }
 
-  const { connected: wsConnected } = useReviewSocket(repo, handleSocketEvent);
+  const { connected: wsConnected } = useReviewSocket(repo, handleSocketEvent, {
+    enabled: canLoad,
+    onAuthError: (status) => (status === 403 ? setAccessDenied(true) : setUser(null)),
+  });
 
   // polling
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
-    if (!autoRefresh) return;
+    if (!autoRefresh || !canLoad) return;
     pollRef.current = setInterval(() => {
       loadList(repo);
       if (selectedSha) loadDetail(repo, selectedSha);
     }, POLL_INTERVAL_MS);
     return () => clearInterval(pollRef.current);
-  }, [autoRefresh, repo, selectedSha, loadList, loadDetail]);
+  }, [autoRefresh, canLoad, repo, selectedSha, loadList, loadDetail]);
 
   function handleSelect(sha) {
     setSelectedSha(sha);
@@ -138,10 +169,7 @@ export default function App() {
     const trimmed = repoInput.trim();
     if (!trimmed || trimmed === repo) return;
     setRepo(trimmed);
-    setListLoading(true);
-    setSelectedSha(null);
-    setSelectedJob(null);
-    setEventsByCommit({});
+    resetRepoState();
   }
 
   return (
@@ -154,6 +182,7 @@ export default function App() {
         autoRefresh={autoRefresh}
         onToggleAutoRefresh={() => setAutoRefresh((v) => !v)}
         wsConnected={wsConnected}
+        wsEnabled={canLoad}
         user={user}
         onLogin={handleLogin}
         onLogout={handleLogout}
@@ -174,7 +203,13 @@ export default function App() {
         </NavTab>
       </div>
 
-      {view === "reviews" ? (
+      {!authChecked ? (
+        <div style={{ padding: 24, fontSize: 13, color: "var(--fg-muted)" }}>Loading…</div>
+      ) : !signedIn ? (
+        <SignInPrompt reason="signed_out" repo={repo} onLogin={handleLogin} />
+      ) : accessDenied ? (
+        <SignInPrompt reason="forbidden" repo={repo} login={user.login} onLogin={handleLogin} />
+      ) : view === "reviews" ? (
         <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
           <div style={{ width: 320, flexShrink: 0 }}>
             <ReviewList
