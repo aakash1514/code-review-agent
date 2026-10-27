@@ -1,0 +1,23 @@
+# Pinned to the versions in the local dev venv (Python 3.13.2).
+
+# Web API (api/)
+fastapi==0.139.0
+pydantic==2.13.4
+# ASGI server: not imported by the code, but required to run api.webhook:app.
+# [standard] pulls in websockets/httptools/watchfiles for the dashboard WebSocket.
+uvicorn[standard]==0.50.2
+
+# GitHub App auth (tools/github_tools.py): RS256 JWT signing needs cryptography
+PyJWT==2.13.0
+cryptography==49.0.0
+
+# HTTP calls to GitHub / Groq
+requests==2.34.2
+
+# RAG (rag/)
+qdrant-client==1.18.0
+huggingface_hub==1.22.0
+numpy==2.5.1
+
+# config.py loads .env
+python-dotenv==1.2.2
