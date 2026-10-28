@@ -1,0 +1,17 @@
+# Local in-process embeddings (EMBEDDING_PROVIDER=local), CPU only.
+# Installs the core runtime too:
+#   pip install -r requirements-local-embed.txt
+#
+# Not used by the Docker image; the cloud embeds with Bedrock Titan V2.
+#
+# PyTorch's CPU index serves "+cpu" wheels. pip prefers them over PyPI's,
+# because a local version label sorts higher, so `torch==2.14.1` installs
+# 2.14.1+cpu. On Linux that skips the CUDA build, which is several GB
+# larger. macOS has no "+cpu" wheels, and PyPI's build there is already
+# CPU-only.
+-r requirements.txt
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1
+sentence-transformers==6.2.0
+transformers==5.13.0
