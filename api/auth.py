@@ -107,6 +107,13 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict:
 
 
 _REPO_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def validate_repo_name(repo: str) -> None:
+    """Raises 400 unless `repo` is a plain 'owner/name'. Every route that
+    takes ?repo= runs this before touching the database or calling GitHub."""
+    if not _REPO_NAME_RE.match(repo) or ".." in repo:
+        raise HTTPException(status_code=400, detail="repo must be 'owner/name'")
 _REPO_ACCESS_TTL_SECONDS = 300
 
 # Both caches are in-process and only ever hold results that are safe to
@@ -136,8 +143,7 @@ def check_repo_read_access(repo: str, login: str) -> None:
     logged-in user for a public repo, collaborators (incl. org/team grants)
     with read or higher for a private one. Shared by require_repo_read and
     the WebSocket ticket route so the rule lives in one place."""
-    if not _REPO_NAME_RE.match(repo) or ".." in repo:
-        raise HTTPException(status_code=400, detail="repo must be 'owner/name'")
+    validate_repo_name(repo)
 
     key = (login.lower(), repo.lower())
     with _cache_lock:

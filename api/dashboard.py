@@ -7,7 +7,7 @@ from tools.github_tools import (
 )
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
 from pipeline.hitl_gate import DEFAULT_STATUS_CONTEXT
-from api.auth import get_current_user, require_repo_read
+from api.auth import get_current_user, require_repo_read, validate_repo_name
 from pipeline.session_store import create_ws_ticket, WS_TICKET_TTL_SECONDS
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
@@ -137,6 +137,7 @@ def approve_review(commit_sha: str, repo: str = Query(...), user: dict = Depends
     see check_repo_write_permission's docstring) before touching anything.
     Only then does it call set_commit_status for real.
     """
+    validate_repo_name(repo)
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")
@@ -157,6 +158,7 @@ def approve_review(commit_sha: str, repo: str = Query(...), user: dict = Depends
 @router.post("/reviews/{commit_sha}/block")
 def block_review(commit_sha: str, repo: str = Query(...), user: dict = Depends(get_current_user)):
     """Same auth/permission gate as approve_review above."""
+    validate_repo_name(repo)
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")
@@ -179,6 +181,7 @@ def clear_review_override(commit_sha: str, repo: str = Query(...), user: dict = 
     """Backs 'Change decision' in the dashboard — same auth gate as
     approve/block, since undoing a decision is itself a repo-write-adjacent
     action worth gating the same way."""
+    validate_repo_name(repo)
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")

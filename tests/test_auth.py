@@ -273,6 +273,21 @@ def test_clear_override_with_write_access(client, github, alice):
 
 
 @pytest.mark.parametrize("action", OVERRIDE_ROUTES)
+@pytest.mark.parametrize("repo", ["noslash", "a/b/c", "owner/..", "own er/repo"])
+def test_override_with_malformed_repo_is_400_before_github(client, github, alice, action, repo):
+    # A job stored under the bad name, and write access granted, so only the
+    # repo-name check stands between the request and a commit status.
+    try_start_job(repo, 1, SHA)
+    github.check_repo_write_permission.return_value = True
+
+    resp = client.post(f"/api/reviews/{SHA}/{action}", params={"repo": repo}, headers=alice)
+
+    assert resp.status_code == 400
+    github.get_installation_token.assert_not_called()
+    github.set_commit_status.assert_not_called()
+
+
+@pytest.mark.parametrize("action", OVERRIDE_ROUTES)
 def test_override_on_unknown_review_is_404(client, github, alice, action):
     github.check_repo_write_permission.return_value = True
     assert client.post(f"/api/reviews/{SHA}/{action}?repo={REPO}", headers=alice).status_code == 404
