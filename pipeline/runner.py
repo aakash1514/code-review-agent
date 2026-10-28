@@ -1,5 +1,6 @@
 import asyncio, time
 from models.findings import AgentReport
+from tools.logs import log_context, log_event
 from agents.security_agent import run_security_agent
 from agents.architecture_agent import run_architecture_agent
 from agents.test_coverage_agent import run_test_coverage_agent
@@ -25,16 +26,21 @@ async def run_agents_parallel(changed_file: str, diff_snippet: str, retrieved_co
     async def _run_one(agent_fn) -> AgentReport:
         agent_name = agent_fn.__module__.split(".")[-1]
         start = time.monotonic()
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(agent_fn, changed_file, diff_snippet, retrieved_context),
-                timeout=timeout_seconds)
-        except asyncio.TimeoutError:
-            result = AgentReport(agent_name=agent_name, findings=[], summary=f"Agent timed out after {timeout_seconds}s.",
-                                  runtime_ms=int((time.monotonic() - start) * 1000), error="timeout")
-        except Exception as e:
-            result = AgentReport(agent_name=agent_name, findings=[], summary="Agent failed with an unexpected error.",
-                                  runtime_ms=int((time.monotonic() - start) * 1000), error=f"{type(e).__name__}: {e}")
+        # gather() runs each _run_one in its own task (its own context copy),
+        # so this agent field never leaks into the other agents' log lines.
+        with log_context(agent=agent_name, file=changed_file):
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(agent_fn, changed_file, diff_snippet, retrieved_context),
+                    timeout=timeout_seconds)
+            except asyncio.TimeoutError:
+                result = AgentReport(agent_name=agent_name, findings=[], summary=f"Agent timed out after {timeout_seconds}s.",
+                                      runtime_ms=int((time.monotonic() - start) * 1000), error="timeout")
+            except Exception as e:
+                result = AgentReport(agent_name=agent_name, findings=[], summary="Agent failed with an unexpected error.",
+                                      runtime_ms=int((time.monotonic() - start) * 1000), error=f"{type(e).__name__}: {e}")
+            log_event("agent_finished", duration_ms=int((time.monotonic() - start) * 1000),
+                      findings=len(result.findings), error=result.error)
         if on_agent_complete:
             try:
                 await on_agent_complete(result)

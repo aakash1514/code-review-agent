@@ -1,11 +1,18 @@
 import hashlib, hmac, json, time, traceback
+from tools.logs import configure_logging, log_context, log_event
+
+# First, so every later line (imports included) is formatted as LOG_FORMAT says.
+configure_logging()
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pipeline.reindexer import rebuild_index_for_repo
 from config import settings
 from models.findings import AgentReport
-from pipeline.job_store import init_db, interrupt_active_jobs, try_start_job, update_status, save_result, is_stale_sha
+from pipeline.job_store import (
+    init_db, interrupt_active_jobs, try_start_job, update_status, save_result, is_stale_sha, get_job,
+)
 from pipeline.runner import run_agents_parallel
 from pipeline.file_filter import plan_review_files
 from agents.documentation_agent import run_documentation_agent
@@ -138,13 +145,17 @@ def _run_reindex_task(repo: str, ref: str) -> None:
     everything it calls (github_tools, CodebaseIndexer, HF embeddings) are
     already synchronous/requests-based, matching the rest of this project.
     """
-    try:
-        token = get_installation_token()
-        stats = rebuild_index_for_repo(repo, ref, token)
-        print(f"[reindex] {repo}@{ref[:7]}: {stats['functions']} functions, {stats['chunks']} chunks re-indexed")
-    except Exception as e:
-        traceback.print_exc()
-        print(f"[reindex] FAILED for {repo}@{ref[:7]}: {type(e).__name__}: {e}")
+    started = time.monotonic()
+    with log_context(repo=repo, commit=ref[:7]):
+        try:
+            token = get_installation_token()
+            stats = rebuild_index_for_repo(repo, ref, token)
+            log_event("reindex_finished", status="complete", functions=stats["functions"],
+                      chunks=stats["chunks"], duration_ms=int((time.monotonic() - started) * 1000))
+        except Exception as e:
+            traceback.print_exc()
+            log_event("reindex_finished", status="failed", error=f"{type(e).__name__}: {e}",
+                      duration_ms=int((time.monotonic() - started) * 1000))
 
 @app.websocket("/ws/reviews")
 async def reviews_ws(websocket: WebSocket, repo: str, ticket: str | None = None):
@@ -220,12 +231,15 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 
 async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:
     started = time.monotonic()
-    with count_llm_calls() as llm_calls:
+    # Every log line of this review, including from agent threads, carries
+    # repo/pr/commit; the closing review_finished event has the numbers.
+    with log_context(repo=repo, pr=pr_number, commit=commit_sha[:7]), count_llm_calls() as llm_calls:
         try:
             await _run_review_pipeline(repo, pr_number, commit_sha)
         finally:
-            print(f"[review] {repo}#{pr_number} @ {commit_sha[:7]}: finished in "
-                  f"{time.monotonic() - started:.1f}s with {llm_calls.calls} LLM call(s)")
+            job = get_job(repo, commit_sha) or {}
+            log_event("review_finished", status=job.get("status"),
+                      duration_ms=int((time.monotonic() - started) * 1000), llm_calls=llm_calls.calls)
 
 
 async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:
