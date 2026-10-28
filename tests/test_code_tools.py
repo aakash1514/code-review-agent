@@ -1,5 +1,3 @@
-import pytest
-
 from tools.code_tools import extract_functions, strip_diff_to_source
 
 # Shaped like a real `git diff` / GitHub PR patch: header lines, a hunk
@@ -66,13 +64,29 @@ def test_hunk_starting_mid_function_degrades_to_empty():
     assert extract_functions(strip_diff_to_source(diff)) == []
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG: strip_diff_to_source keeps git's '\\ No newline at end of file' "
-    "marker as a source line, so ast.parse fails and extract_functions "
-    "silently returns [] for any patch whose file lacks a trailing newline "
-    "(GitHub includes this marker in PR patches)."
-))
 def test_no_newline_marker_does_not_break_parsing():
     diff = DIFF + "\\ No newline at end of file\n"
     names = {fn.name for fn in extract_functions(strip_diff_to_source(diff))}
     assert names == {"calculate_discount", "fetch_total", "add"}
+
+
+def test_no_newline_markers_after_removed_and_added_sides_are_dropped():
+    # Old file ended without a newline and the PR appends to it, so git puts
+    # a marker after the removed line, and another after the new last line.
+    diff = (
+        "@@ -1,2 +1,5 @@\n"
+        " def first():\n"
+        "-    return 1\n"
+        "\\ No newline at end of file\n"
+        "+    return 1\n"
+        "+\n"
+        "+def second():\n"
+        "+    return 2\n"
+        "\\ No newline at end of file\n"
+    )
+
+    source = strip_diff_to_source(diff)
+
+    assert "No newline" not in source
+    assert source == "def first():\n    return 1\n\ndef second():\n    return 2"
+    assert [fn.name for fn in extract_functions(source)] == ["first", "second"]

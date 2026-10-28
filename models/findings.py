@@ -39,9 +39,16 @@ class Finding(BaseModel):
 
     # Used later for dedup (gap #8) — function name + category + normalized
     # snippet, so a finding survives line-number churn across commits.
+    # Agents can omit the snippet, and an empty one would make every
+    # snippetless finding in a file+category collide; for those, key on the
+    # normalized title plus the line (when known) instead.
     def dedup_key(self) -> str:
         import hashlib
         normalized = "".join(self.location.snippet.split())  # strip whitespace
+        if not normalized:
+            title = " ".join(self.title.lower().split())
+            line = self.location.line_start if self.location.line_start > 0 else ""
+            normalized = f"\0title:{title}\0line:{line}"
         snippet_hash = hashlib.sha256(normalized.encode()).hexdigest()[:12]
         return f"{self.location.file}:{self.category}:{snippet_hash}"
 

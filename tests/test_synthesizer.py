@@ -31,15 +31,26 @@ def test_near_duplicates_are_kept(make_finding, override):
     assert len(deduplicate_findings([base, near])) == 2
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG: dedup_key is file + category + snippet hash only. Agents may omit "
-    "the snippet (it defaults to ''), so two unrelated findings in the same "
-    "file and category collapse into one and a real finding is silently dropped."
-))
 def test_distinct_findings_without_snippets_are_both_kept(make_finding):
     a = make_finding(title="Missing docstring for foo", category="DOCUMENTATION", snippet="")
     b = make_finding(title="Missing docstring for bar", category="DOCUMENTATION", snippet="")
     assert len(deduplicate_findings([a, b])) == 2
+
+
+def test_snippetless_findings_dedup_on_normalised_title_and_line(make_finding):
+    def doc(title, line, snippet=""):
+        return make_finding(title=title, category="DOCUMENTATION", snippet=snippet,
+                            line_start=line, line_end=line)
+
+    # Same finding re-reported: case/whitespace in the title and a
+    # whitespace-only snippet don't make it distinct.
+    assert len(deduplicate_findings([doc("Missing docstring", 10), doc("  missing   DOCSTRING ", 10, "  \n")])) == 1
+    # Same title on different lines is two findings.
+    assert len(deduplicate_findings([doc("Missing docstring", 10), doc("Missing docstring", 20)])) == 2
+    # No line number on either: the title alone decides.
+    assert len(deduplicate_findings([doc("Missing docstring", 0), doc("missing docstring", 0)])) == 1
+    # A snippetless finding never merges with one that has a snippet.
+    assert len(deduplicate_findings([doc("Missing docstring", 10), doc("Missing docstring", 10, "def f(): ...")])) == 2
 
 
 def test_ranking_is_critical_to_info_then_confidence(make_finding):

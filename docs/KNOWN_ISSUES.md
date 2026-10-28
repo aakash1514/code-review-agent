@@ -1,6 +1,6 @@
 # Known issues
 
-Deferred fixes and open questions, each with when it should be fixed. Items 8 and 9 were found by the test suite and are pinned by strict `xfail` tests, so fixing them makes those tests fail until the `xfail` marker is removed.
+Deferred fixes and open questions, each with when it should be fixed.
 
 1. **Call-graph key collision within one file.** `rag/knowledge_graph.py` keys nodes as `file::function`, not `file::Class.function`, so two classes in the same file with a same-named method share one node and the second overwrites the first. Calls between classes in different files are scoped correctly. Pinned by `tests/test_knowledge_graph.py::test_same_named_methods_in_one_file_get_separate_nodes`.
    **Fix when:** next change to the knowledge graph. It needs a key format change, a matching update to the retriever's `find_fn_key_by_name_and_file` lookup, and a reindex of every repo.
@@ -22,9 +22,3 @@ Deferred fixes and open questions, each with when it should be fixed. Items 8 an
 
 7. **Auth state is per instance or SQLite-only.** The repo read-access cache and repo visibility cache are in-process; sessions, WebSocket tickets and login handoff codes live in the local SQLite file; the WebSocket connection manager is in memory. A second backend instance would see different caches and a different database.
    **Fix when:** before running more than one backend instance (AWS Phase 8.7). Move these to a shared store such as Redis or Postgres.
-
-8. **"\ No newline at end of file" breaks function extraction.** `tools/code_tools.strip_diff_to_source` keeps git's `\ No newline at end of file` marker as a source line, so `ast.parse` fails and `extract_functions` silently returns nothing. GitHub includes this marker in PR patches, so a changed file without a trailing newline gets no function names, which weakens retrieval and finding grouping for that file. Pinned by `tests/test_code_tools.py::test_no_newline_marker_does_not_break_parsing`.
-   **Fix when:** next change to `code_tools`. Skip lines starting with `\ ` in `strip_diff_to_source`.
-
-9. **De-duplication drops distinct findings that have no snippet.** `Finding.dedup_key` is file + category + snippet hash. The snippet defaults to an empty string when an agent leaves it out, so two unrelated findings in the same file and category (for example "Missing docstring for foo" and "... for bar") collapse into one, and a real finding is silently lost. Pinned by `tests/test_synthesizer.py::test_distinct_findings_without_snippets_are_both_kept`.
-   **Fix when:** before relying on review completeness. Include the title, or the line range, in the key when the snippet is empty.

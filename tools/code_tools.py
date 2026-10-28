@@ -45,6 +45,10 @@ def strip_diff_to_source(diff_text: str) -> str:
     for line in diff_text.splitlines():
         if line.startswith(("diff --git", "index ", "--- ", "+++ ", "@@ ")):
             continue
+        # git's "\ No newline at end of file" marker (after either side of a
+        # change); it isn't source, and left in it makes ast.parse fail.
+        if line.startswith("\\"):
+            continue
         if line.startswith("+"):
             lines.append(line[1:])
         elif line.startswith("-"):
