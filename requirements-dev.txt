@@ -1,7 +1,16 @@
-# Test-only dependencies, on top of requirements.txt.
-#   pip install -r requirements.txt -r requirements-dev.txt
+# Dev-machine dependencies, on top of requirements.txt (or
+# requirements-local-embed.txt). Not installed in the Docker image.
+#   pip install -r requirements-local-embed.txt -r requirements-dev.txt
 #   python -m pytest
+
+# Tests
 pytest==9.1.1
 # FastAPI's TestClient is built on httpx.
 httpx==0.28.1
 pytest-cov==7.1.0
+
+# Lets boto3 use `aws login` credentials (AWS_PROFILE=cra-admin) on the
+# laptop. botocore pins the exact awscrt version; botocore itself is pinned
+# through boto3 in requirements.txt. The cloud uses the ECS task role and
+# does not need this.
+botocore[crt]
