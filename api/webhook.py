@@ -17,10 +17,11 @@ from tools.code_tools import extract_functions, strip_diff_to_source
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
 from rag.indexer import CodebaseIndexer
 from rag.retriever import SmartRetriever, short_error
-from rag.embeddings import EMBED_DIM, EMBED_MODEL, EmbeddingConfigError, verify_embedder
+from rag.embeddings import EmbeddingConfigError, collection_name, verify_embedder
 from api.dashboard import router as dashboard_router
 from api.ws_manager import manager
 from api.auth import router as auth_router
+from api.origin_verify import OriginVerifyMiddleware
 from pipeline.session_store import (
     init_session_db, purge_expired_ws_tickets, purge_expired_sessions, purge_expired_handoff_codes,
     consume_ws_ticket,
@@ -47,7 +48,8 @@ async def lifespan(app: FastAPI):
     # similar-code context, so warn and keep serving.
     try:
         embedder = await run_in_threadpool(verify_embedder)
-        print(f"[startup] embeddings: {embedder.name} ({EMBED_MODEL}, {EMBED_DIM}-dim) ok")
+        print(f"[startup] embeddings: {embedder.name} ({embedder.model}, {embedder.dim}-dim, "
+              f"collection {collection_name(embedder)}) ok")
     except EmbeddingConfigError:
         raise
     except Exception as e:
@@ -57,8 +59,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+# Added last, so it runs first: requests that didn't come through CloudFront
+# are rejected before anything else (no-op when ORIGIN_VERIFY_SECRET is empty).
+app.add_middleware(OriginVerifyMiddleware)
 app.include_router(dashboard_router)
 app.include_router(auth_router)
+
+
+@app.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
+def healthz() -> dict:
+    """Liveness check for the ALB target group and the container HEALTHCHECK.
+    Deliberately cheap: no GitHub, LLM, Qdrant or database call, so a slow
+    dependency can't get a healthy task killed and restarted."""
+    return {"status": "ok"}
 
 
 def _verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
