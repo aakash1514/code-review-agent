@@ -14,7 +14,7 @@ def main():
 
     print(f"Building knowledge graph for {args.repo}...")
     stats = index_repo_from_local_path(args.path, args.repo, kg_output=kg_output)
-    print(f"  {stats['functions']} functions indexed into graph → saved to {kg_output}")
+    print(f"  {stats['functions']} functions indexed into graph -> saved to {kg_output}")
     print(f"  {stats['chunks']} chunks created and indexed into Qdrant collection 'codebase', tagged repo={args.repo!r}")
     print("Done.")
 

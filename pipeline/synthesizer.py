@@ -1,10 +1,6 @@
 import re
-import time
-import requests
-from config import settings
 from models.findings import AgentReport, Finding, ReviewReport, Severity
-
-GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+from tools.model_client import model_client
 
 _SEVERITY_ORDER = {
     Severity.CRITICAL: 0,
@@ -308,23 +304,17 @@ def _warnings_markdown(review: ReviewReport) -> str:
     return "\n".join(lines) + "\n\n"
 
 
-def synthesize_markdown(
-    review: ReviewReport,
-    diff_snippet: str | None = None,
-    max_retries: int = 2,
-) -> str:
+def synthesize_markdown(review: ReviewReport, diff_snippet: str | None = None) -> str:
     """Final PR comment body: any review warnings, then the findings write-up
     from _synthesize_findings_markdown. Never raises."""
-    return _warnings_markdown(review) + _synthesize_findings_markdown(review, diff_snippet, max_retries)
+    return _warnings_markdown(review) + _synthesize_findings_markdown(review, diff_snippet)
 
 
-def _synthesize_findings_markdown(
-    review: ReviewReport,
-    diff_snippet: str | None = None,
-    max_retries: int = 2,
-) -> str:
+def _synthesize_findings_markdown(review: ReviewReport, diff_snippet: str | None = None) -> str:
     """
-    Generates the final PR comment body via Groq. Falls back to a plain
+    Generates the final PR comment body via Groq (model_client, task
+    "synthesis": reasoning model first, light model as fallback, rate-limit
+    retries and truncation checks included). Falls back to a plain
     deterministic template (never raises) if Groq is unavailable — a PR
     should never go without a comment just because the narrative-writing
     step failed; that would silently break the pipeline's core promise.
@@ -352,39 +342,14 @@ def _synthesize_findings_markdown(
         f"Findings:\n{findings_text}"
     )
 
-    for attempt in range(max_retries + 1):
-        try:
-            resp = requests.post(
-                GROQ_CHAT_URL,
-                headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": settings.GROQ_MODEL_REASONING,
-                    "messages": [
-                        {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": 1500,
-                    "temperature": 0.3,
-                },
-                timeout=60,
-            )
-            if resp.status_code == 429 and attempt < max_retries:
-                wait = int(resp.headers.get("retry-after", 5 * (attempt + 1)))
-                print(f"    [synthesizer] rate-limited, waiting {wait}s")
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            text = resp.json()["choices"][0]["message"]["content"].strip()
-            if text.startswith("```"):
-                text = text.strip("`").lstrip("markdown").strip()
-            print("    [synthesizer] used LLM synthesis")
-            return text
-        except Exception as e:
-            print(f"    [synthesizer] Groq synthesis failed (attempt {attempt + 1}): "
-                  f"{type(e).__name__}: {e}")
-            if attempt == max_retries:
-                print("    [synthesizer] falling back to deterministic template")
-                return _deterministic_fallback_markdown(review)
-            continue
-
-    return _deterministic_fallback_markdown(review)
+    try:
+        text = model_client.reason(system=SYNTHESIS_SYSTEM_PROMPT, user=user_prompt,
+                                   task="synthesis", max_tokens=1500).strip()
+    except Exception as e:
+        print(f"    [synthesizer] Groq synthesis failed ({type(e).__name__}: {e}) "
+              f"— falling back to deterministic template")
+        return _deterministic_fallback_markdown(review)
+    if text.startswith("```"):
+        text = text.strip("`").lstrip("markdown").strip()
+    print("    [synthesizer] used LLM synthesis")
+    return text

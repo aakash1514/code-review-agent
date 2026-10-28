@@ -43,14 +43,14 @@ React dashboard ── live progress over WebSocket, approve / block override
 - **Severity-ranked synthesis.** Findings are de-duplicated across agents and re-runs, then ranked from CRITICAL to INFO.
 - **Merge gate with human in the loop.** CRITICAL findings set a failed `ai-code-review` commit status. A reviewer can approve or block from the dashboard, and that decision is stored.
 - **Live dashboard.** GitHub OAuth login, per-agent progress over WebSocket, a Monaco side-by-side diff viewer, and a React Flow call-graph view.
-- **Zero-cost stack.** Everything runs on free tiers: Llama 3.3 70B on Groq for reasoning, a lighter Groq model for simple tasks, with automatic fallback between them.
+- **Zero-cost stack.** Everything runs on free tiers: OpenAI's open-weight gpt-oss-120b on Groq for reasoning, gpt-oss-20b for simple tasks, with automatic fallback between them. Embeddings run locally.
 
 ## Tech stack
 
 | Layer | Tools |
 | --- | --- |
 | API | Python, FastAPI, WebSockets |
-| LLM | Groq (Llama 3.3 70B + light model, with fallback) |
+| LLM | Groq: gpt-oss-120b + gpt-oss-20b, with fallback |
 | Retrieval | sentence-transformers embeddings on CPU (or the Hugging Face Inference API), Qdrant Cloud, Python `ast` call graph |
 | Storage | SQLite (jobs, results, override decisions) |
 | GitHub | GitHub App (JWT + installation tokens), webhooks, commit status API, PR comments |
@@ -80,7 +80,7 @@ dashboard/   React + Vite frontend
    | `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` | Your GitHub App's IDs |
    | `GITHUB_PRIVATE_KEY_PATH` | Path to the App's `.pem` private key |
    | `GITHUB_WEBHOOK_SECRET` | Secret used to verify webhook signatures |
-   | `GROQ_API_KEY`, `GROQ_MODEL_REASONING`, `GROQ_MODEL_LIGHT` | Groq key and model names |
+   | `GROQ_API_KEY`, `GROQ_MODEL_REASONING`, `GROQ_MODEL_LIGHT` | Groq key and model IDs, e.g. `openai/gpt-oss-120b` and `openai/gpt-oss-20b` |
    | `EMBEDDING_PROVIDER` | `local` (default): embed in-process with sentence-transformers on CPU. `hf_api`: use the Hugging Face Inference API |
    | `HF_TOKEN` | Hugging Face token, only needed for `EMBEDDING_PROVIDER=hf_api` |
    | `QDRANT_URL`, `QDRANT_API_KEY` | Qdrant Cloud cluster |
@@ -95,7 +95,7 @@ dashboard/   React + Vite frontend
 
    ```bash
    pip install -r requirements.txt
-   python scripts/index_repo.py --path /path/to/repo --repo owner/name
+   python -m scripts.index_repo --path /path/to/repo --repo owner/name
    ```
 
    `requirements.txt` pulls CPU-only PyTorch from PyTorch's own package index (the `--extra-index-url` line), so no CUDA libraries are installed. The embedding stack (PyTorch CPU, sentence-transformers, transformers and their dependencies) adds about 1.1 GB on disk, including a roughly 125 MB PyTorch download. The first run also downloads the embedding model (about 210 MB) into the Hugging Face cache. The API loads it once at startup, and refuses to start if the configured model doesn't return 384-dim vectors.

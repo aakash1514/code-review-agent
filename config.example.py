@@ -34,10 +34,10 @@ class Settings:
     # Groq (all LLM reasoning, including synthesis)
     # Groq API key.
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "gsk_your_groq_api_key")
-    # Groq model ID for heavy reasoning / synthesis calls.
-    GROQ_MODEL_REASONING: str = os.getenv("GROQ_MODEL_REASONING", "your-groq-reasoning-model-id")
-    # Groq model ID for cheap / fast calls.
-    GROQ_MODEL_LIGHT: str = os.getenv("GROQ_MODEL_LIGHT", "your-groq-light-model-id")
+    # Groq model ID for heavy reasoning / synthesis calls (security, architecture).
+    GROQ_MODEL_REASONING: str = os.getenv("GROQ_MODEL_REASONING", "openai/gpt-oss-120b")
+    # Groq model ID for cheap / fast calls (test coverage, documentation).
+    GROQ_MODEL_LIGHT: str = os.getenv("GROQ_MODEL_LIGHT", "openai/gpt-oss-20b")
 
     # Embeddings
     # "local" (default): run the embedding model in-process with
