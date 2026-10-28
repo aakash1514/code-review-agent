@@ -19,5 +19,17 @@ qdrant-client==1.18.0
 huggingface_hub==1.22.0
 numpy==2.5.1
 
+# Local embeddings (rag/embeddings.py, EMBEDDING_PROVIDER=local), CPU only.
+# PyTorch's CPU index serves "+cpu" wheels. pip prefers them over PyPI's,
+# because a local version label sorts higher, so `torch==2.14.1` installs
+# 2.14.1+cpu. On Linux that skips the CUDA build, which is several GB
+# larger. The Dockerfile only needs `pip install -r requirements.txt`;
+# this line is read from the file. macOS has no "+cpu" wheels, and PyPI's
+# build there is already CPU-only.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1
+sentence-transformers==6.2.0
+transformers==5.13.0
+
 # config.py loads .env
 python-dotenv==1.2.2

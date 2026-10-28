@@ -39,8 +39,14 @@ class Settings:
     # Groq model ID for cheap / fast calls.
     GROQ_MODEL_LIGHT: str = os.getenv("GROQ_MODEL_LIGHT", "your-groq-light-model-id")
 
+    # Embeddings
+    # "local" (default): run the embedding model in-process with
+    # sentence-transformers on CPU; no API credits needed.
+    # "hf_api": call the Hugging Face Inference API with HF_TOKEN below.
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
+
     # Hugging Face
-    # HF access token for the embeddings Inference API.
+    # HF access token, only used when EMBEDDING_PROVIDER is "hf_api".
     HF_TOKEN: str = os.getenv("HF_TOKEN", "hf_your_hugging_face_token")
 
     # Qdrant

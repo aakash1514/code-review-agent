@@ -14,6 +14,7 @@ from tools.code_tools import extract_functions, strip_diff_to_source
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
 from rag.indexer import CodebaseIndexer
 from rag.retriever import SmartRetriever, short_error
+from rag.embeddings import EMBED_DIM, EMBED_MODEL, EmbeddingConfigError, verify_embedder
 from api.dashboard import router as dashboard_router
 from api.ws_manager import manager
 from api.auth import router as auth_router
@@ -38,6 +39,17 @@ async def lifespan(app: FastAPI):
     swept = sweep_stuck_jobs()
     if swept:
         print(f"[startup] swept {swept} stuck job(s) from a previous run")
+    # A wrong provider name or vector size is a config bug: refuse to start.
+    # Anything else (no network, no API credits) only costs reviews their
+    # similar-code context, so warn and keep serving.
+    try:
+        embedder = await run_in_threadpool(verify_embedder)
+        print(f"[startup] embeddings: {embedder.name} ({EMBED_MODEL}, {EMBED_DIM}-dim) ok")
+    except EmbeddingConfigError:
+        raise
+    except Exception as e:
+        print(f"[startup] WARNING: embeddings unavailable ({type(e).__name__}: {e}) "
+              f"— reviews will run without similar-code context")
     yield
 
 app = FastAPI(lifespan=lifespan)

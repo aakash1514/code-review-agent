@@ -27,6 +27,7 @@ class FakeSettings:
     GROQ_MODEL_REASONING = "test-reasoning-model"
     GROQ_MODEL_LIGHT = "test-light-model"
     HF_TOKEN = "test-hf-token"
+    EMBEDDING_PROVIDER = "local"
     QDRANT_URL = "http://qdrant.invalid:6333"
     QDRANT_API_KEY = "test-qdrant-key"
     DASHBOARD_BASE_URL = "http://localhost:5173"
@@ -90,6 +91,36 @@ def clear_in_process_caches():
     api.auth._read_access_cache.clear()
     api.auth._visibility_cache.clear()
     tools.github_tools._token_cache.clear()
+
+
+class FakeSentenceTransformer:
+    """Stands in for the real model: deterministic unit vectors per text,
+    of whatever dimension the test asks for."""
+
+    def __init__(self, dim: int = 384):
+        self.dim = dim
+        self.calls: list[list[str]] = []
+
+    def encode(self, texts, **kwargs):
+        import zlib
+        import numpy as np
+        self.calls.append(list(texts))
+        rows = []
+        for text in texts:
+            vec = np.random.default_rng(zlib.crc32(text.encode())).standard_normal(self.dim)
+            rows.append(vec / np.linalg.norm(vec) if kwargs.get("normalize_embeddings") else vec)
+        return np.array(rows)
+
+
+@pytest.fixture(autouse=True)
+def fake_embedding_model(monkeypatch):
+    """No test loads or downloads the real sentence-transformers model, and
+    each test starts with no cached embedders."""
+    import rag.embeddings
+    model = FakeSentenceTransformer()
+    monkeypatch.setattr(rag.embeddings, "_load_sentence_transformer", lambda: model)
+    monkeypatch.setattr(rag.embeddings, "_embedders", {})
+    return model
 
 
 @pytest.fixture

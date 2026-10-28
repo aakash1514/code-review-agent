@@ -38,7 +38,7 @@ React dashboard ── live progress over WebSocket, approve / block override
 ## Features
 
 - **Parallel specialist agents.** Security, Architecture, Test Coverage and Documentation agents run concurrently. A slow or failing agent times out without breaking the review.
-- **Codebase-aware RAG.** Python files are split into function and class chunks with the `ast` module, embedded with `granite-embedding-97m` (384-dim), and stored in Qdrant with per-repo filtering.
+- **Codebase-aware RAG.** Python files are split into function and class chunks with the `ast` module, embedded with `granite-embedding-97m` (384-dim, run locally with sentence-transformers by default), and stored in Qdrant with per-repo filtering. If embedding or Qdrant fails during a review, the review still runs on call-graph context and says "vector context unavailable" in the PR comment and the dashboard.
 - **Call-graph knowledge graph.** Calls, callers and imports for every function, scoped per class. It rebuilds automatically on every push to the default branch.
 - **Severity-ranked synthesis.** Findings are de-duplicated across agents and re-runs, then ranked from CRITICAL to INFO.
 - **Merge gate with human in the loop.** CRITICAL findings set a failed `ai-code-review` commit status. A reviewer can approve or block from the dashboard, and that decision is stored.
@@ -51,7 +51,7 @@ React dashboard ── live progress over WebSocket, approve / block override
 | --- | --- |
 | API | Python, FastAPI, WebSockets |
 | LLM | Groq (Llama 3.3 70B + light model, with fallback) |
-| Retrieval | Hugging Face Inference API embeddings, Qdrant Cloud, Python `ast` call graph |
+| Retrieval | sentence-transformers embeddings on CPU (or the Hugging Face Inference API), Qdrant Cloud, Python `ast` call graph |
 | Storage | SQLite (jobs, results, override decisions) |
 | GitHub | GitHub App (JWT + installation tokens), webhooks, commit status API, PR comments |
 | Dashboard | React, Vite, Monaco Editor, React Flow + dagre |
@@ -71,7 +71,7 @@ dashboard/   React + Vite frontend
 
 ## Running locally
 
-**Prerequisites:** Python 3.11+, Node.js 18+, a GitHub App installed on the target repo, and free accounts on Groq, Hugging Face and Qdrant Cloud.
+**Prerequisites:** Python 3.11+, Node.js 18+, a GitHub App installed on the target repo, and free accounts on Groq and Qdrant Cloud (plus Hugging Face if you use `EMBEDDING_PROVIDER=hf_api`).
 
 1. **Configure.** Copy [`config.example.py`](config.example.py) to `config.py` (it's git-ignored) and fill in these settings:
 
@@ -81,7 +81,8 @@ dashboard/   React + Vite frontend
    | `GITHUB_PRIVATE_KEY_PATH` | Path to the App's `.pem` private key |
    | `GITHUB_WEBHOOK_SECRET` | Secret used to verify webhook signatures |
    | `GROQ_API_KEY`, `GROQ_MODEL_REASONING`, `GROQ_MODEL_LIGHT` | Groq key and model names |
-   | `HF_TOKEN` | Hugging Face token for embeddings |
+   | `EMBEDDING_PROVIDER` | `local` (default): embed in-process with sentence-transformers on CPU. `hf_api`: use the Hugging Face Inference API |
+   | `HF_TOKEN` | Hugging Face token, only needed for `EMBEDDING_PROVIDER=hf_api` |
    | `QDRANT_URL`, `QDRANT_API_KEY` | Qdrant Cloud cluster |
    | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET` | OAuth credentials for dashboard login |
    | `GITHUB_OAUTH_REDIRECT_URI` | OAuth callback, e.g. `http://localhost:8000/auth/callback` |
@@ -96,6 +97,8 @@ dashboard/   React + Vite frontend
    pip install -r requirements.txt
    python scripts/index_repo.py --path /path/to/repo --repo owner/name
    ```
+
+   `requirements.txt` pulls CPU-only PyTorch from PyTorch's own package index (the `--extra-index-url` line), so no CUDA libraries are installed. The embedding stack (PyTorch CPU, sentence-transformers, transformers and their dependencies) adds about 1.1 GB on disk, including a roughly 125 MB PyTorch download. The first run also downloads the embedding model (about 210 MB) into the Hugging Face cache. The API loads it once at startup, and refuses to start if the configured model doesn't return 384-dim vectors.
 
 3. **Start the API.**
 
