@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pipeline.reindexer import rebuild_index_for_repo
 from config import settings
 from models.findings import AgentReport
-from pipeline.job_store import init_db, sweep_stuck_jobs, try_start_job, update_status, save_result, is_stale_sha
+from pipeline.job_store import init_db, interrupt_active_jobs, try_start_job, update_status, save_result, is_stale_sha
 from pipeline.runner import run_agents_parallel
 from pipeline.file_filter import plan_review_files
 from agents.documentation_agent import run_documentation_agent
@@ -29,6 +29,35 @@ from pipeline.session_store import (
 from starlette.concurrency import run_in_threadpool
 
 HANDLED_ACTIONS = {"opened", "synchronize"}
+INTERRUPTED_STATUS_TEXT = "Interrupted by a restart or deploy. Push again to re-run."
+
+
+def _report_interrupted(jobs: list[dict]) -> None:
+    """Best effort: turn each abandoned review's 'pending' commit status into
+    'error', so the PR isn't blocked by a check that will never finish.
+    Never raises: shutdown and startup must go on even if GitHub is down."""
+    try:
+        token = get_installation_token()
+    except Exception as e:
+        print(f"[lifecycle] could not update GitHub status for {len(jobs)} interrupted review(s): "
+              f"{type(e).__name__}: {e}")
+        return
+    for job in jobs:
+        try:
+            set_commit_status(job["repo"], job["commit_sha"], "error", INTERRUPTED_STATUS_TEXT,
+                              context=DEFAULT_STATUS_CONTEXT, token=token)
+        except Exception as e:
+            print(f"[lifecycle] status update failed for {job['repo']}#{job['pr_number']} "
+                  f"@ {job['commit_sha'][:7]}: {type(e).__name__}: {e}")
+
+
+async def _interrupt_active_jobs(phase: str, reason: str) -> None:
+    jobs = interrupt_active_jobs(reason)
+    if jobs:
+        print(f"[{phase}] marked {len(jobs)} unfinished review(s) interrupted: "
+              + ", ".join(f"{j['repo']}#{j['pr_number']}@{j['commit_sha'][:7]}" for j in jobs))
+        await run_in_threadpool(_report_interrupted, jobs)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,9 +69,9 @@ async def lifespan(app: FastAPI):
         purged = purge()
         if purged:
             print(f"[startup] purged {purged} expired {what}")
-    swept = sweep_stuck_jobs()
-    if swept:
-        print(f"[startup] swept {swept} stuck job(s) from a previous run")
+    # Anything still pending/running belongs to a previous process that
+    # didn't shut down cleanly (crash, SIGKILL): this is the only process.
+    await _interrupt_active_jobs("startup", "interrupted: the server restarted before this review finished")
     # A wrong provider name or vector size is a config bug: refuse to start.
     # Anything else (no network, no API credits) only costs reviews their
     # similar-code context, so warn and keep serving.
@@ -56,6 +85,11 @@ async def lifespan(app: FastAPI):
         print(f"[startup] WARNING: embeddings unavailable ({type(e).__name__}: {e}) "
               f"— reviews will run without similar-code context")
     yield
+    # Shutdown (SIGTERM from an ECS deploy, Ctrl+C, --reload). uvicorn has
+    # already waited for in-flight requests and background reviews (up to
+    # --timeout-graceful-shutdown) and cancelled the rest, so anything still
+    # pending/running here will never finish.
+    await _interrupt_active_jobs("shutdown", "interrupted by a server shutdown (deploy or restart)")
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])

@@ -4,8 +4,10 @@ import time
 from contextlib import contextmanager
 from config import settings
 
-# Job lifecycle: pending -> running -> complete | failed
-VALID_STATUSES = {"pending", "running", "complete", "failed"}
+# Job lifecycle: pending -> running -> complete | failed | interrupted
+# "interrupted": the process stopped (deploy, restart, crash) before the
+# review finished. Terminal, like failed, and a redelivery may retry it.
+VALID_STATUSES = {"pending", "running", "complete", "failed", "interrupted"}
 
 
 def _db_path() -> str:
@@ -231,8 +233,39 @@ def is_stale_sha(repo: str, pr_number: int, commit_sha: str) -> bool:
         return row["latest_sha"] != commit_sha
 
 
+def interrupt_active_jobs(reason: str) -> list[dict]:
+    """
+    Marks EVERY pending/running job 'interrupted' (error = reason) and returns
+    them as [{"repo", "pr_number", "commit_sha"}], so the caller can also
+    fix their GitHub commit statuses.
+
+    Called on shutdown (SIGTERM from an ECS deploy, Ctrl+C, --reload), for
+    the reviews this process is abandoning, and on startup, for reviews a
+    previous process left behind without a clean shutdown (crash, SIGKILL).
+
+    Safe with no age threshold only because exactly one process owns this
+    database (one ECS task, uvicorn --workers 1, and deployments that stop
+    the old task before starting the new one). Known issue #7 covers what
+    changes before running more than one.
+
+    One UPDATE ... RETURNING statement, so a job can't change state between
+    being read and being marked.
+    """
+    with _connect() as conn:
+        rows = conn.execute("""
+            UPDATE review_jobs
+            SET status = 'interrupted', error = ?, updated_at = ?
+            WHERE status IN ('pending', 'running')
+            RETURNING repo, pr_number, commit_sha
+        """, (reason, time.time())).fetchall()
+        return [dict(r) for r in rows]
+
+
 def sweep_stuck_jobs(stale_after_seconds: float = 900.0) -> int:
     """
+    Superseded at startup by interrupt_active_jobs() (no age threshold, and
+    it lets the caller fix GitHub statuses too); kept as a tested primitive.
+
     Gap #1's "sweep stuck runs on startup": any job left in 'pending' or
     'running' past stale_after_seconds (default 15 min — generous given
     agents finish in seconds, but allows for Groq rate-limit backoff chains)

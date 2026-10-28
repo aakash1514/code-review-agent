@@ -20,6 +20,8 @@ export const JOB_STATUS_META = {
   running: { fg: "var(--accent)", bg: "var(--accent-subtle)", label: "Running" },
   complete: { fg: "var(--success)", bg: "var(--success-subtle)", label: "Complete" },
   failed: { fg: "var(--danger)", bg: "var(--danger-subtle)", label: "Failed" },
+  // The server stopped (deploy/restart) before the review finished; push again to re-run.
+  interrupted: { fg: "var(--fg-muted)", bg: "var(--neutral-subtle)", label: "Interrupted" },
 };
 
 export function shortSha(sha) {
