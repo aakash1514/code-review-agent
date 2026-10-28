@@ -13,7 +13,7 @@ from tools.github_tools import get_installation_token, get_pr_diff, get_pr_files
 from tools.code_tools import extract_functions, strip_diff_to_source
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
 from rag.indexer import CodebaseIndexer
-from rag.retriever import SmartRetriever
+from rag.retriever import SmartRetriever, short_error
 from api.dashboard import router as dashboard_router
 from api.ws_manager import manager
 from api.auth import router as auth_router
@@ -60,7 +60,12 @@ def _load_retriever(repo: str) -> SmartRetriever:
         kg.load(kg_path_for_repo(repo))
     except Exception as e:
         print(f"[webhook] no usable knowledge graph for {repo} ({type(e).__name__}: {e}) — continuing without it")
-    indexer = CodebaseIndexer()
+    try:
+        indexer = CodebaseIndexer()
+    except Exception as e:
+        print(f"[webhook] WARNING: vector index unavailable for {repo} ({type(e).__name__}: {e}) "
+              f"— continuing without similar-code context")
+        return SmartRetriever(kg, None, indexer_error=short_error(e))
     return SmartRetriever(kg, indexer)
 
 def _run_reindex_task(repo: str, ref: str) -> None:
@@ -173,6 +178,7 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
 
         retriever = _load_retriever(repo)
         all_agent_reports = []
+        vector_errors: list[str] = []  # distinct reasons, in order seen
 
         async def _on_agent_complete(report: AgentReport) -> None:
             await manager.broadcast(repo, {
@@ -196,6 +202,9 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
                 diff_snippet=patch,
                 changed_fn_names=changed_fn_names,
             )
+            vector_error = context.get("vector_context_error")
+            if vector_error and vector_error not in vector_errors:
+                vector_errors.append(vector_error)
             context_string = retriever.build_agent_context_string(context)
             reports = await run_agents_parallel(
                 changed_file=changed_file,
@@ -208,6 +217,7 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
         review = build_review_report(
             pr_number=pr_number, repo=repo, commit_sha=commit_sha, agent_reports=all_agent_reports,
         )
+        review.warnings = [f"vector context unavailable: {reason}" for reason in vector_errors]
 
         # Fix 5.1: generate markdown FIRST, attach it to the review object,
         # THEN persist — previously save_result ran before synthesize_markdown

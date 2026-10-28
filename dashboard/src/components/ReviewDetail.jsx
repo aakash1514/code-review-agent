@@ -319,6 +319,23 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
 
           {review && (
             <>
+              {review.warnings?.length > 0 && (
+                <div
+                  style={{
+                    marginBottom: 16,
+                    padding: "10px 14px",
+                    borderRadius: "var(--radius)",
+                    background: "var(--attention-subtle)",
+                    color: "var(--attention)",
+                    fontSize: 13,
+                  }}
+                >
+                  {review.warnings.map((w) => (
+                    <div key={w}>⚠️ {w}</div>
+                  ))}
+                </div>
+              )}
+
               <div style={{ marginBottom: 16 }}>
                 <AgentStrip agentReports={review.agent_reports} />
               </div>

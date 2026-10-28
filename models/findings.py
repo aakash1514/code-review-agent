@@ -71,6 +71,9 @@ class ReviewReport(BaseModel):
     high_count: int = 0
     hitl_required: bool = False
     synthesized_review: str = ""
+    # Non-fatal problems the review ran through, e.g. "vector context
+    # unavailable: <reason>". Shown on the dashboard and in the PR comment.
+    warnings: list[str] = Field(default_factory=list)
 
     # Status field for gap #1 — durable job tracking.
     # "pending" | "running" | "complete" | "failed"

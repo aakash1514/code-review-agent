@@ -298,7 +298,27 @@ def _deterministic_fallback_markdown(review: ReviewReport) -> str:
     return "\n".join(lines)
 
 
+def _warnings_markdown(review: ReviewReport) -> str:
+    """Note for the top of the PR comment when the review ran degraded, e.g.
+    without vector context — so a thinner review is never silently thin."""
+    if not review.warnings:
+        return ""
+    lines = [f"> ⚠️ {w}" for w in review.warnings]
+    lines.append("> Call-graph context and all agents still ran; similar-code context was skipped.")
+    return "\n".join(lines) + "\n\n"
+
+
 def synthesize_markdown(
+    review: ReviewReport,
+    diff_snippet: str | None = None,
+    max_retries: int = 2,
+) -> str:
+    """Final PR comment body: any review warnings, then the findings write-up
+    from _synthesize_findings_markdown. Never raises."""
+    return _warnings_markdown(review) + _synthesize_findings_markdown(review, diff_snippet, max_retries)
+
+
+def _synthesize_findings_markdown(
     review: ReviewReport,
     diff_snippet: str | None = None,
     max_retries: int = 2,
