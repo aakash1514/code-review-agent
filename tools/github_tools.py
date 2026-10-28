@@ -1,5 +1,7 @@
 import time
 import base64
+from pathlib import Path
+
 import jwt
 import requests
 from config import settings
@@ -11,16 +13,34 @@ GITHUB_API_BASE = "https://api.github.com"
 _token_cache: dict[str, dict] = {}
 
 
+def load_private_key(private_key_path: str | None = None) -> str:
+    """
+    The GitHub App's private key as a PEM string.
+
+    Order: an explicit private_key_path argument; else settings.GITHUB_PRIVATE_KEY
+    (the key itself, as ECS injects it from Secrets Manager); else the file at
+    settings.GITHUB_PRIVATE_KEY_PATH (local dev). A key kept on one line in
+    .env, with its newlines written as \\n, is turned back into a real PEM.
+    """
+    if private_key_path is None:
+        inline = (getattr(settings, "GITHUB_PRIVATE_KEY", "") or "").strip()
+        if inline:
+            key = inline.replace("\\n", "\n")
+            if "-----BEGIN" not in key:
+                # Never echo the value: it is a secret even when malformed.
+                raise ValueError("GITHUB_PRIVATE_KEY is set but does not look like a PEM private key")
+            return key
+        private_key_path = settings.GITHUB_PRIVATE_KEY_PATH
+    return Path(private_key_path).read_text(encoding="utf-8")
+
+
 def generate_jwt(app_id: str | None = None, private_key_path: str | None = None) -> str:
     """
     Signs a short-lived JWT as the GitHub App itself (not an installation).
     Valid for 10 minutes max per GitHub's rules — we use 9 to leave margin.
     """
     app_id = app_id or settings.GITHUB_APP_ID
-    private_key_path = private_key_path or settings.GITHUB_PRIVATE_KEY_PATH
-
-    with open(private_key_path, "r") as f:
-        private_key = f.read()
+    private_key = load_private_key(private_key_path)
 
     now = int(time.time())
     payload = {
