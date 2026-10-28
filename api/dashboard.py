@@ -7,13 +7,15 @@ from tools.github_tools import (
 )
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
 from pipeline.hitl_gate import DEFAULT_STATUS_CONTEXT
-from api.auth import get_current_user
+from api.auth import get_current_user, require_repo_read, validate_repo_name
+from pipeline.session_store import create_ws_ticket, WS_TICKET_TTL_SECONDS
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
 
 @router.get("/reviews")
-def list_reviews(repo: str = Query(..., description="owner/name"), limit: int = 20):
+def list_reviews(repo: str = Query(..., description="owner/name"), limit: int = 20,
+                 user: dict = Depends(require_repo_read)):
     jobs = list_jobs(repo, limit=limit)
     summaries = []
     for job in jobs:
@@ -37,7 +39,7 @@ def list_reviews(repo: str = Query(..., description="owner/name"), limit: int = 
 
 
 @router.get("/reviews/{commit_sha}")
-def get_review(commit_sha: str, repo: str = Query(...)):
+def get_review(commit_sha: str, repo: str = Query(...), user: dict = Depends(require_repo_read)):
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")
@@ -55,7 +57,7 @@ def get_review(commit_sha: str, repo: str = Query(...)):
 
 
 @router.get("/reviews/{commit_sha}/files")
-def get_review_files(commit_sha: str, repo: str = Query(...)):
+def get_review_files(commit_sha: str, repo: str = Query(...), user: dict = Depends(require_repo_read)):
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")
@@ -96,7 +98,7 @@ def get_review_files(commit_sha: str, repo: str = Query(...)):
 
 
 @router.get("/graph")
-def get_graph(repo: str = Query(...)):
+def get_graph(repo: str = Query(...), user: dict = Depends(require_repo_read)):
     kg = KnowledgeGraph()
     try:
         kg.load(kg_path_for_repo(repo))
@@ -118,6 +120,14 @@ def get_graph(repo: str = Query(...)):
     return {"repo": repo, "nodes": nodes, "edges": edges}
 
 
+@router.post("/ws-ticket")
+def issue_ws_ticket(repo: str = Query(...), user: dict = Depends(require_repo_read)):
+    """Trades a Bearer session for a single-use, short-lived ticket the
+    dashboard passes as /ws/reviews?ticket=... — see create_ws_ticket."""
+    ticket = create_ws_ticket(user["github_login"], repo)
+    return {"ticket": ticket, "expires_in": WS_TICKET_TTL_SECONDS}
+
+
 @router.post("/reviews/{commit_sha}/approve")
 def approve_review(commit_sha: str, repo: str = Query(...), user: dict = Depends(get_current_user)):
     """
@@ -127,6 +137,7 @@ def approve_review(commit_sha: str, repo: str = Query(...), user: dict = Depends
     see check_repo_write_permission's docstring) before touching anything.
     Only then does it call set_commit_status for real.
     """
+    validate_repo_name(repo)
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")
@@ -147,6 +158,7 @@ def approve_review(commit_sha: str, repo: str = Query(...), user: dict = Depends
 @router.post("/reviews/{commit_sha}/block")
 def block_review(commit_sha: str, repo: str = Query(...), user: dict = Depends(get_current_user)):
     """Same auth/permission gate as approve_review above."""
+    validate_repo_name(repo)
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")
@@ -169,6 +181,7 @@ def clear_review_override(commit_sha: str, repo: str = Query(...), user: dict = 
     """Backs 'Change decision' in the dashboard — same auth gate as
     approve/block, since undoing a decision is itself a repo-write-adjacent
     action worth gating the same way."""
+    validate_repo_name(repo)
     job = get_job(repo, commit_sha)
     if job is None:
         raise HTTPException(status_code=404, detail="review not found")

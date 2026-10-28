@@ -1,15 +1,11 @@
-import time
 import hashlib
-import numpy as np
-from huggingface_hub import InferenceClient
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from rag.chunker import CodeChunk
+from rag.embeddings import EMBED_DIM, EMBED_MODEL, Embedder, get_embedder  # noqa: F401 (re-exported)
 from config import settings
 
 COLLECTION_NAME = "codebase"
-EMBED_DIM = 384
-EMBED_MODEL = "ibm-granite/granite-embedding-97m-multilingual-r2"
 
 
 def _stable_point_id(repo: str, fn_key: str) -> int:
@@ -27,35 +23,14 @@ def _stable_point_id(repo: str, fn_key: str) -> int:
 
 
 class CodebaseIndexer:
-    def __init__(self):
+    def __init__(self, embedder: Embedder | None = None):
+        """embedder defaults to the one EMBEDDING_PROVIDER selects (see
+        rag/embeddings.py); the local model is shared process-wide."""
         self.client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
-        self.hf_client = InferenceClient(provider="hf-inference", api_key=settings.HF_TOKEN)
+        self.embedder = embedder or get_embedder()
 
-    def _embed(self, texts: list[str], max_retries: int = 3) -> list[list[float]]:
-        embeddings = []
-        for text in texts:
-            for attempt in range(max_retries):
-                try:
-                    result = self.hf_client.feature_extraction(text, model=EMBED_MODEL)
-                    arr = np.array(result)
-
-                    if arr.ndim == 1:
-                        vec = arr.tolist()
-                    elif arr.ndim == 2:
-                        vec = arr.mean(axis=0).tolist()
-                    else:
-                        raise ValueError(f"Unexpected embedding shape: {arr.shape}")
-
-                    embeddings.append(vec)
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        print(f"    Final error for text (first 50 chars: {text[:50]!r}): {type(e).__name__}: {e}")
-                        raise
-                    wait = 5 * (attempt + 1)
-                    print(f"    Embed call failed ({type(e).__name__}: {e}), retrying in {wait}s...")
-                    time.sleep(wait)
-        return embeddings
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        return self.embedder.embed(texts)
 
     def ensure_collection(self) -> None:
         existing = [c.name for c in self.client.get_collections().collections]

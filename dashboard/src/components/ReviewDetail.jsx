@@ -63,13 +63,24 @@ function TabButton({ active, onClick, children }) {
   );
 }
 
+function persistedResolution(job) {
+  return job?.override_action ? { action: job.override_action, by: job.override_by } : null;
+}
+
 export default function ReviewDetail({ repo, job, onActionComplete, liveEvents = [], currentUser, onLogin }) {
+  const review = job?.review;
+  // Diff files are fetched once per (repo, commit) once a review exists.
+  const filesKey = job?.commit_sha && review ? `${repo}\n${job.commit_sha}` : null;
+
   const [actionState, setActionState] = useState({ loading: false, message: null });
-  const [resolution, setResolution] = useState(null); // { action: "approved"|"blocked", by: string } | null
+  // Restore a persisted decision from the backend (survives reloads),
+  // rather than always starting blank — this is the actual point of
+  // persisting override_action/override_by server-side.
+  const [resolution, setResolution] = useState(() => persistedResolution(job)); // { action: "approved"|"blocked", by: string } | null
   const [clearing, setClearing] = useState(false);
   const [tab, setTab] = useState("findings");
   const [files, setFiles] = useState(null);
-  const [filesLoading, setFilesLoading] = useState(false);
+  const [filesLoading, setFilesLoading] = useState(filesKey !== null);
   const [filesError, setFilesError] = useState(null);
   const [jumpTarget, setJumpTarget] = useState(null);
 
@@ -78,19 +89,40 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
   const [graphError, setGraphError] = useState(null);
   const graphRepoRef = useRef(null);
 
-  const review = job?.review;
-
-  useEffect(() => {
+  // Reset per-review UI state when a different commit is opened
+  // (adjusting state during render instead of in an effect).
+  const [prevSha, setPrevSha] = useState(job?.commit_sha);
+  if (prevSha !== job?.commit_sha) {
+    setPrevSha(job?.commit_sha);
     setTab("findings");
     setFiles(null);
     setFilesError(null);
     setJumpTarget(null);
-    // Restore a persisted decision from the backend (survives reloads),
-    // rather than always starting blank — this is the actual point of
-    // persisting override_action/override_by server-side.
-    setResolution(job?.override_action ? { action: job.override_action, by: job.override_by } : null);
+  }
+
+  // Sync the banner when the persisted decision changes (or a new commit is
+  // opened) without touching the tab or the loaded diff.
+  const [prevDecision, setPrevDecision] = useState({
+    sha: job?.commit_sha,
+    overrideAction: job?.override_action,
+    overrideBy: job?.override_by,
+  });
+  if (
+    prevDecision.sha !== job?.commit_sha ||
+    prevDecision.overrideAction !== job?.override_action ||
+    prevDecision.overrideBy !== job?.override_by
+  ) {
+    setPrevDecision({ sha: job?.commit_sha, overrideAction: job?.override_action, overrideBy: job?.override_by });
+    setResolution(persistedResolution(job));
     setActionState({ loading: false, message: null });
-  }, [job?.commit_sha, job?.override_action, job?.override_by]);
+  }
+
+  // Mark the diff as loading as soon as a new fetch is due.
+  const [prevFilesKey, setPrevFilesKey] = useState(filesKey);
+  if (filesKey !== prevFilesKey) {
+    setPrevFilesKey(filesKey);
+    if (filesKey !== null) setFilesLoading(true);
+  }
 
   useEffect(() => {
     if (tab !== "callgraph") return;
@@ -120,7 +152,6 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
   useEffect(() => {
     if (!job?.commit_sha || !review) return;
     let cancelled = false;
-    setFilesLoading(true);
     fetchReviewFiles(repo, job.commit_sha)
       .then((data) => {
         if (!cancelled) setFiles(data.files ?? []);
@@ -288,9 +319,50 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
 
           {review && (
             <>
+              {review.warnings?.length > 0 && (
+                <div
+                  style={{
+                    marginBottom: 16,
+                    padding: "10px 14px",
+                    borderRadius: "var(--radius)",
+                    background: "var(--attention-subtle)",
+                    color: "var(--attention)",
+                    fontSize: 13,
+                  }}
+                >
+                  {review.warnings.map((w) => (
+                    <div key={w}>⚠️ {w}</div>
+                  ))}
+                </div>
+              )}
+
               <div style={{ marginBottom: 16 }}>
                 <AgentStrip agentReports={review.agent_reports} />
               </div>
+
+              {review.skipped_files?.length > 0 && (
+                <details
+                  style={{
+                    marginBottom: 16,
+                    padding: "8px 14px",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius)",
+                    fontSize: 13,
+                    color: "var(--fg-muted)",
+                  }}
+                >
+                  <summary style={{ cursor: "pointer" }}>
+                    {review.skipped_files.length} file(s) not reviewed
+                  </summary>
+                  <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+                    {review.skipped_files.map((s) => (
+                      <li key={s.filename}>
+                        <code>{s.filename}</code> — {s.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
 
               <div style={{ marginBottom: 20 }}>
                 <VerdictBanner review={review} />

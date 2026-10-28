@@ -38,20 +38,21 @@ React dashboard ── live progress over WebSocket, approve / block override
 ## Features
 
 - **Parallel specialist agents.** Security, Architecture, Test Coverage and Documentation agents run concurrently. A slow or failing agent times out without breaking the review.
-- **Codebase-aware RAG.** Python files are split into function and class chunks with the `ast` module, embedded with `granite-embedding-97m` (384-dim), and stored in Qdrant with per-repo filtering.
+- **Review scope.** Lockfiles, generated and vendored paths, removed and binary files, `LICENSE` and patches over `MAX_PATCH_CHARS` are skipped before any LLM call. Docs (`.md`, `.txt`, `.rst`) get only the documentation agent. At most `MAX_FILES_PER_REVIEW` files are reviewed, Python first, then other code, config and docs. Every skipped file is listed with its reason in the PR comment and on the dashboard. All of this is configurable in `config.py`.
+- **Codebase-aware RAG.** Python files are split into function and class chunks with the `ast` module, embedded with `granite-embedding-97m` (384-dim, run locally with sentence-transformers by default), and stored in Qdrant with per-repo filtering. If embedding or Qdrant fails during a review, the review still runs on call-graph context and says "vector context unavailable" in the PR comment and the dashboard.
 - **Call-graph knowledge graph.** Calls, callers and imports for every function, scoped per class. It rebuilds automatically on every push to the default branch.
 - **Severity-ranked synthesis.** Findings are de-duplicated across agents and re-runs, then ranked from CRITICAL to INFO.
 - **Merge gate with human in the loop.** CRITICAL findings set a failed `ai-code-review` commit status. A reviewer can approve or block from the dashboard, and that decision is stored.
 - **Live dashboard.** GitHub OAuth login, per-agent progress over WebSocket, a Monaco side-by-side diff viewer, and a React Flow call-graph view.
-- **Zero-cost stack.** Everything runs on free tiers: Llama 3.3 70B on Groq for reasoning, a lighter Groq model for simple tasks, with automatic fallback between them.
+- **Zero-cost stack.** Everything runs on free tiers: OpenAI's open-weight gpt-oss-120b on Groq for reasoning, gpt-oss-20b for simple tasks, with automatic fallback between them. Embeddings run locally.
 
 ## Tech stack
 
 | Layer | Tools |
 | --- | --- |
 | API | Python, FastAPI, WebSockets |
-| LLM | Groq (Llama 3.3 70B + light model, with fallback) |
-| Retrieval | Hugging Face Inference API embeddings, Qdrant Cloud, Python `ast` call graph |
+| LLM | Groq: gpt-oss-120b + gpt-oss-20b, with fallback |
+| Retrieval | sentence-transformers embeddings on CPU (or the Hugging Face Inference API), Qdrant Cloud, Python `ast` call graph |
 | Storage | SQLite (jobs, results, override decisions) |
 | GitHub | GitHub App (JWT + installation tokens), webhooks, commit status API, PR comments |
 | Dashboard | React, Vite, Monaco Editor, React Flow + dagre |
@@ -71,26 +72,34 @@ dashboard/   React + Vite frontend
 
 ## Running locally
 
-**Prerequisites:** Python 3.11+, Node.js 18+, a GitHub App installed on the target repo, and free accounts on Groq, Hugging Face and Qdrant Cloud.
+**Prerequisites:** Python 3.11+, Node.js 18+, a GitHub App installed on the target repo, and free accounts on Groq and Qdrant Cloud (plus Hugging Face if you use `EMBEDDING_PROVIDER=hf_api`).
 
-1. **Configure.** Create `config.py` (it's git-ignored) with these settings:
+1. **Configure.** Copy [`config.example.py`](config.example.py) to `config.py` (it's git-ignored) and fill in these settings:
 
    | Setting | What it is |
    | --- | --- |
    | `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` | Your GitHub App's IDs |
    | `GITHUB_PRIVATE_KEY_PATH` | Path to the App's `.pem` private key |
    | `GITHUB_WEBHOOK_SECRET` | Secret used to verify webhook signatures |
-   | `GROQ_API_KEY`, `GROQ_MODEL_REASONING`, `GROQ_MODEL_LIGHT` | Groq key and model names |
-   | `HF_TOKEN` | Hugging Face token for embeddings |
+   | `GROQ_API_KEY`, `GROQ_MODEL_REASONING`, `GROQ_MODEL_LIGHT` | Groq key and model IDs, e.g. `openai/gpt-oss-120b` and `openai/gpt-oss-20b` |
+   | `EMBEDDING_PROVIDER` | `local` (default): embed in-process with sentence-transformers on CPU. `hf_api`: use the Hugging Face Inference API |
+   | `HF_TOKEN` | Hugging Face token, only needed for `EMBEDDING_PROVIDER=hf_api` |
    | `QDRANT_URL`, `QDRANT_API_KEY` | Qdrant Cloud cluster |
+   | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET` | OAuth credentials for dashboard login |
+   | `GITHUB_OAUTH_REDIRECT_URI` | OAuth callback, e.g. `http://localhost:8000/auth/callback` |
+   | `DASHBOARD_BASE_URL` | Where the dashboard runs, e.g. `http://localhost:5173` (login redirects back here) |
    | `DATABASE_URL` | e.g. `sqlite:///./review_agent.db` |
+
+   **Set up dashboard login.** Dashboard login uses your GitHub App's own OAuth credentials. In the GitHub App's settings (*Settings → Developer settings → GitHub Apps → your app*), set the callback URL to `http://localhost:8000/auth/callback` and generate a client secret. Copy the App's client ID and that secret into `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`. A standalone OAuth App with the same callback URL also works.
 
 2. **Install and index the target repo.**
 
    ```bash
    pip install -r requirements.txt
-   python scripts/index_repo.py --path /path/to/repo --repo owner/name
+   python -m scripts.index_repo --path /path/to/repo --repo owner/name
    ```
+
+   `requirements.txt` pulls CPU-only PyTorch from PyTorch's own package index (the `--extra-index-url` line), so no CUDA libraries are installed. The embedding stack (PyTorch CPU, sentence-transformers, transformers and their dependencies) adds about 1.1 GB on disk, including a roughly 125 MB PyTorch download. The first run also downloads the embedding model (about 210 MB) into the Hugging Face cache. The API loads it once at startup, and refuses to start if the configured model doesn't return 384-dim vectors.
 
 3. **Start the API.**
 
@@ -112,16 +121,32 @@ dashboard/   React + Vite frontend
 
 ## API
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| POST | `/webhook` | GitHub App webhook receiver |
-| WS | `/ws/reviews?repo=owner/name` | Live review progress |
-| GET | `/reviews` | List reviews |
-| GET | `/reviews/{commit_sha}` | Review detail |
-| GET | `/reviews/{commit_sha}/files` | Changed files for the diff viewer |
-| POST | `/reviews/{commit_sha}/approve` | Human override: approve |
-| POST | `/reviews/{commit_sha}/block` | Human override: block |
-| GET | `/graph` | Call graph for the dashboard |
+| Method | Route | Purpose | Login required |
+| --- | --- | --- | --- |
+| POST | `/webhook` | GitHub App webhook receiver (HMAC-verified) | No |
+| WS | `/ws/reviews?repo=owner/name&ticket=<ticket>` | Live review progress | Ticket (see below) |
+| GET | `/api/reviews?repo=owner/name` | List reviews | Yes + read access |
+| GET | `/api/reviews/{commit_sha}?repo=owner/name` | Review detail | Yes + read access |
+| GET | `/api/reviews/{commit_sha}/files?repo=owner/name` | Changed files for the diff viewer | Yes + read access |
+| POST | `/api/reviews/{commit_sha}/approve?repo=owner/name` | Human override: approve | Yes + write access |
+| POST | `/api/reviews/{commit_sha}/block?repo=owner/name` | Human override: block | Yes + write access |
+| POST | `/api/reviews/{commit_sha}/clear-override?repo=owner/name` | Remove a human override | Yes + write access |
+| GET | `/api/graph?repo=owner/name` | Call graph for the dashboard | Yes + read access |
+| POST | `/api/ws-ticket?repo=owner/name` | Issue a single-use ticket for the WebSocket | Yes + read access |
+| GET | `/auth/login` | Redirect to GitHub OAuth consent | No |
+| GET | `/auth/callback` | OAuth callback; redirects to the dashboard with a one-time `?code=` | No |
+| POST | `/auth/exchange` | Trade the one-time code (JSON body `{"code": ...}`) for a session token | No |
+| GET | `/auth/me` | Current user's login and avatar | Yes |
+| POST | `/auth/logout` | End the current session | No |
+
+Routes marked "Yes" expect an `Authorization: Bearer <session_id>` header. The session ID comes from the OAuth login flow. Without a valid session they return `401`.
+
+- **Login handoff:** after GitHub login, `/auth/callback` redirects to the dashboard with a one-time `?code=`, never the session itself. The dashboard immediately removes it from the URL and sends it to `POST /auth/exchange` in a JSON body to get the session token. A code is valid for 60 seconds and works once; an unknown, expired or reused code returns `401`. Sessions last 7 days.
+- **No GitHub token is stored.** The user's GitHub OAuth token is used once during the callback to find out who logged in, then dropped. Expired sessions, tickets and handoff codes are deleted on startup.
+
+- **Read access** means the signed-in GitHub user can read the repo: any signed-in user for a public repo, or a collaborator with read access or higher (including org and team access) for a private one. Otherwise the route returns `403`. Allowed checks and repo visibility are cached in-process for 5 minutes, so removing someone's access takes up to 5 minutes to apply here. Denials are not cached.
+- **Write access** is checked on every request for the override routes.
+- **WebSocket:** browsers can't send an `Authorization` header on a WebSocket, so the dashboard first calls `POST /api/ws-ticket` and then connects with `?ticket=`. A ticket is valid for 30 seconds, works once, and only for the repo it was issued for. Otherwise the handshake is rejected with `403`. Access is checked when the socket opens; an already open socket isn't closed on logout.
 
 ## Engineering notes
 
@@ -129,9 +154,20 @@ dashboard/   React + Vite frontend
 - **Cross-repo isolation.** Qdrant point IDs hash `repo::file::function`, and every search filters by repo, so two repos with identical function names never overwrite each other.
 - **Safe de-duplication.** Only exact duplicates are dropped. Showing a near-duplicate twice is safer than silently losing a real finding.
 
+## Limitations
+
+- **Python only.** The agents only analyse Python code. The AST chunker and the call graph are both built on Python's `ast` module. Other files, such as `.js` and `.ts`, only get coarse fallback chunks and are left out of the call graph.
+- **Call-graph key collision.** Call-graph nodes are keyed by file and function name, not by class. If two different classes in the same file define a method with the same name, one overwrites the other in the graph.
+
 ## Roadmap
 
 - [ ] Deploy to AWS: ECS Fargate, Amazon Bedrock with Groq fallback, CloudWatch alarms, Terraform
 - [ ] CI/CD with GitHub Actions (lint, tests, image build, deploy via OIDC)
 - [ ] Prompt size capping for large RAG contexts
 - [ ] Full audit history for override decisions
+
+Deferred fixes and open questions are tracked in [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
+
+## License
+
+Released under the [MIT License](LICENSE).

@@ -1,6 +1,6 @@
 import AuthStatus from "./AuthStatus";
 
-export default function TopBar({ repo, repoInput, onRepoInputChange, onRepoSubmit, autoRefresh, onToggleAutoRefresh, wsConnected, user, onLogin, onLogout }) {
+export default function TopBar({ repo, repoInput, onRepoInputChange, onRepoSubmit, autoRefresh, onToggleAutoRefresh, wsConnected, wsEnabled, user, onLogin, onLogout }) {
   return (
     <header
       style={{
@@ -68,7 +68,7 @@ export default function TopBar({ repo, repoInput, onRepoInputChange, onRepoSubmi
             background: wsConnected ? "var(--success)" : "var(--fg-subtle)",
           }}
         />
-        {wsConnected ? "Live" : "Reconnecting…"}
+        {wsConnected ? "Live" : wsEnabled ? "Reconnecting…" : "Offline"}
       </span>
 
       <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--fg-muted)" }}>

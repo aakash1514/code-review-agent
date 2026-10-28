@@ -38,10 +38,18 @@ function languageForFilename(filename) {
 }
 
 export default function DiffViewer({ files, findings, jumpTarget }) {
-  const [selectedFile, setSelectedFile] = useState(files?.[0]?.filename ?? null);
+  const [selectedFile, setSelectedFile] = useState(jumpTarget ? jumpTarget.file : files?.[0]?.filename ?? null);
+  // A new jump target (each jump is a fresh object) switches to its file;
+  // after that, clicking a file tab selects that file as usual.
+  const [prevJumpTarget, setPrevJumpTarget] = useState(jumpTarget);
+  if (jumpTarget !== prevJumpTarget) {
+    setPrevJumpTarget(jumpTarget);
+    if (jumpTarget) setSelectedFile(jumpTarget.file);
+  }
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
   const decorationsRef = useRef([]);
+  const revealedJumpRef = useRef(null);
 
   const file = files.find((f) => f.filename === selectedFile);
   const fileFindings = findings.filter((f) => f.location.file === selectedFile);
@@ -76,11 +84,8 @@ export default function DiffViewer({ files, findings, jumpTarget }) {
   }, [selectedFile, files, findings]);
 
   useEffect(() => {
-    if (!jumpTarget) return;
-    if (jumpTarget.file !== selectedFile) {
-      setSelectedFile(jumpTarget.file);
-      return; // effect re-runs once selectedFile actually changes
-    }
+    // Reveal each jump once, and only while its file is the one shown.
+    if (!jumpTarget || jumpTarget.file !== selectedFile || revealedJumpRef.current === jumpTarget) return;
     const diffEditor = editorRef.current;
     const monaco = monacoRef.current;
     if (!diffEditor || !monaco) return;
@@ -88,7 +93,7 @@ export default function DiffViewer({ files, findings, jumpTarget }) {
     const lineNumber = jumpTarget.lineStart;
     modifiedEditor.revealLineInCenter(lineNumber);
     modifiedEditor.setSelection(new monaco.Range(lineNumber, 1, lineNumber, 1));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    revealedJumpRef.current = jumpTarget;
   }, [jumpTarget, selectedFile]);
 
   if (!files || files.length === 0) {

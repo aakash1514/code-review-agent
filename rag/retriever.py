@@ -2,10 +2,21 @@ from rag.knowledge_graph import KnowledgeGraph
 from rag.indexer import CodebaseIndexer
 
 
+def short_error(e: Exception, limit: int = 160) -> str:
+    """One-line "Type: message" summary for warnings shown to users."""
+    first_line = str(e).strip().splitlines()[0] if str(e).strip() else ""
+    text = f"{type(e).__name__}: {first_line}" if first_line else type(e).__name__
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
 class SmartRetriever:
-    def __init__(self, knowledge_graph: KnowledgeGraph, indexer: CodebaseIndexer):
+    def __init__(self, knowledge_graph: KnowledgeGraph, indexer: CodebaseIndexer | None,
+                 indexer_error: str | None = None):
+        """indexer is None when it couldn't be created; indexer_error says why
+        and is reported as the vector-context failure for every diff."""
         self.kg = knowledge_graph
         self.indexer = indexer
+        self.indexer_error = indexer_error
 
     def retrieve_for_diff(
         self,
@@ -43,11 +54,23 @@ class SmartRetriever:
                 if node:
                     context["dependents"].append({"fn_key": dep_key, "file": node.file_path})
 
-        similar = self.indexer.search(query_text=diff_snippet, repo=repo, limit=5)
-        context["similar_patterns"] = [
-            {"name": s["name"], "file": s["file_path"], "snippet": s["source"][:300]}
-            for s in similar
-        ]
+        # Vector search (embedding + Qdrant) is best-effort context, like the
+        # knowledge graph: if it fails, the review carries on with call-graph
+        # context only and the failure is reported, never raised. Reindexing
+        # does NOT go through here and still fails loudly.
+        if self.indexer is None:
+            context["vector_context_error"] = self.indexer_error or "vector index not configured"
+        else:
+            try:
+                similar = self.indexer.search(query_text=diff_snippet, repo=repo, limit=5)
+                context["similar_patterns"] = [
+                    {"name": s["name"], "file": s["file_path"], "snippet": s["source"][:300]}
+                    for s in similar
+                ]
+            except Exception as e:
+                context["vector_context_error"] = short_error(e)
+                print(f"[retriever] WARNING: vector search failed for {repo} {changed_file} "
+                      f"({type(e).__name__}: {e}) — continuing without similar-code context")
 
         return context
 

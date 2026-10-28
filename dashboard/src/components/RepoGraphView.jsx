@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import CallGraph from "./CallGraph";
 import { fetchGraph } from "../api";
 
+// Rendered with key={repo}, so a repo change remounts it with fresh state.
 export default function RepoGraphView({ repo }) {
   const [graph, setGraph] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -9,9 +10,6 @@ export default function RepoGraphView({ repo }) {
 
   useEffect(() => {
     let cancelled = false;
-    setGraph(null);
-    setLoading(true);
-    setError(null);
     fetchGraph(repo)
       .then((data) => {
         if (!cancelled) setGraph(data);

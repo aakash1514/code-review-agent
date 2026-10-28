@@ -9,20 +9,25 @@ AGENT_FUNCTIONS = [run_security_agent, run_architecture_agent, run_test_coverage
 
 
 async def run_agents_parallel(changed_file: str, diff_snippet: str, retrieved_context: str,
-                                timeout_seconds: float = 45.0, on_agent_complete=None) -> list[AgentReport]:
+                                timeout_seconds: float = 45.0, on_agent_complete=None,
+                                agent_functions=None) -> list[AgentReport]:
     """Thread-pool concurrency (agents are sync/requests-based, not true async I/O).
     on_agent_complete: optional async callback(AgentReport) -> None, fired as soon as
     EACH agent finishes (not just once all four are done) — used to stream live
     progress to the dashboard over WebSocket. Any exception it raises is swallowed;
-    progress reporting must never break the actual pipeline."""
-    loop = asyncio.get_running_loop()
+    progress reporting must never break the actual pipeline.
+    agent_functions: which agents to run (default: all four); docs-only files
+    pass just the documentation agent.
+    Agents run via asyncio.to_thread, which (unlike run_in_executor) copies
+    the caller's context into the thread, so model_client's per-review LLM
+    call counter sees their calls."""
 
     async def _run_one(agent_fn) -> AgentReport:
         agent_name = agent_fn.__module__.split(".")[-1]
         start = time.monotonic()
         try:
             result = await asyncio.wait_for(
-                loop.run_in_executor(None, agent_fn, changed_file, diff_snippet, retrieved_context),
+                asyncio.to_thread(agent_fn, changed_file, diff_snippet, retrieved_context),
                 timeout=timeout_seconds)
         except asyncio.TimeoutError:
             result = AgentReport(agent_name=agent_name, findings=[], summary=f"Agent timed out after {timeout_seconds}s.",
@@ -37,5 +42,5 @@ async def run_agents_parallel(changed_file: str, diff_snippet: str, retrieved_co
                 pass
         return result
 
-    tasks = [_run_one(fn) for fn in AGENT_FUNCTIONS]
+    tasks = [_run_one(fn) for fn in (agent_functions or AGENT_FUNCTIONS)]
     return await asyncio.gather(*tasks)

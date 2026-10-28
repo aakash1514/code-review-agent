@@ -43,10 +43,13 @@ temp/
 config.py
 github-app-private-key.pem
 review_agent.db
-knowledge_graph.json
-knowledge_graph_aakash1514_code-review-agent-test.json
+knowledge_graph*.json
+interview-prep.html
 review_agent.db-shm
 review_agent.db-wal
 # SQLite runtime files
 *.db-shm
 *.db-wal
+
+# Local DB backups made before schema migrations
+*.db.bak-*

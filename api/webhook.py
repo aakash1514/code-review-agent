@@ -1,4 +1,4 @@
-import hashlib, hmac, json, traceback
+import hashlib, hmac, json, time, traceback
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,17 +7,25 @@ from config import settings
 from models.findings import AgentReport
 from pipeline.job_store import init_db, sweep_stuck_jobs, try_start_job, update_status, save_result, is_stale_sha
 from pipeline.runner import run_agents_parallel
+from pipeline.file_filter import plan_review_files
+from agents.documentation_agent import run_documentation_agent
+from tools.model_client import count_llm_calls
 from pipeline.synthesizer import build_review_report, synthesize_markdown
 from pipeline.hitl_gate import evaluate_hitl_gate, DEFAULT_STATUS_CONTEXT
 from tools.github_tools import get_installation_token, get_pr_diff, get_pr_files, post_pr_review, set_commit_status
 from tools.code_tools import extract_functions, strip_diff_to_source
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
 from rag.indexer import CodebaseIndexer
-from rag.retriever import SmartRetriever
+from rag.retriever import SmartRetriever, short_error
+from rag.embeddings import EMBED_DIM, EMBED_MODEL, EmbeddingConfigError, verify_embedder
 from api.dashboard import router as dashboard_router
 from api.ws_manager import manager
 from api.auth import router as auth_router
-from pipeline.session_store import init_session_db
+from pipeline.session_store import (
+    init_session_db, purge_expired_ws_tickets, purge_expired_sessions, purge_expired_handoff_codes,
+    consume_ws_ticket,
+)
+from starlette.concurrency import run_in_threadpool
 
 HANDLED_ACTIONS = {"opened", "synchronize"}
 
@@ -25,9 +33,26 @@ HANDLED_ACTIONS = {"opened", "synchronize"}
 async def lifespan(app: FastAPI):
     init_db()
     init_session_db()
+    for purge, what in ((purge_expired_ws_tickets, "WebSocket ticket(s)"),
+                        (purge_expired_handoff_codes, "login handoff code(s)"),
+                        (purge_expired_sessions, "dashboard session(s)")):
+        purged = purge()
+        if purged:
+            print(f"[startup] purged {purged} expired {what}")
     swept = sweep_stuck_jobs()
     if swept:
         print(f"[startup] swept {swept} stuck job(s) from a previous run")
+    # A wrong provider name or vector size is a config bug: refuse to start.
+    # Anything else (no network, no API credits) only costs reviews their
+    # similar-code context, so warn and keep serving.
+    try:
+        embedder = await run_in_threadpool(verify_embedder)
+        print(f"[startup] embeddings: {embedder.name} ({EMBED_MODEL}, {EMBED_DIM}-dim) ok")
+    except EmbeddingConfigError:
+        raise
+    except Exception as e:
+        print(f"[startup] WARNING: embeddings unavailable ({type(e).__name__}: {e}) "
+              f"— reviews will run without similar-code context")
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -50,7 +75,12 @@ def _load_retriever(repo: str) -> SmartRetriever:
         kg.load(kg_path_for_repo(repo))
     except Exception as e:
         print(f"[webhook] no usable knowledge graph for {repo} ({type(e).__name__}: {e}) — continuing without it")
-    indexer = CodebaseIndexer()
+    try:
+        indexer = CodebaseIndexer()
+    except Exception as e:
+        print(f"[webhook] WARNING: vector index unavailable for {repo} ({type(e).__name__}: {e}) "
+              f"— continuing without similar-code context")
+        return SmartRetriever(kg, None, indexer_error=short_error(e))
     return SmartRetriever(kg, indexer)
 
 def _run_reindex_task(repo: str, ref: str) -> None:
@@ -70,10 +100,16 @@ def _run_reindex_task(repo: str, ref: str) -> None:
         print(f"[reindex] FAILED for {repo}@{ref[:7]}: {type(e).__name__}: {e}")
 
 @app.websocket("/ws/reviews")
-async def reviews_ws(websocket: WebSocket, repo: str):
-    """Dashboard connects here per-repo (?repo=owner/name) and receives every
-    pipeline progress event for reviews running against that repo. No auth —
-    same trust boundary as the rest of the dashboard API for now (gap #4)."""
+async def reviews_ws(websocket: WebSocket, repo: str, ticket: str | None = None):
+    """Dashboard connects here per-repo (?repo=owner/name&ticket=...) and
+    receives every pipeline progress event for reviews running against that
+    repo. The ticket comes from POST /api/ws-ticket, which already checked
+    the session and repo read access; it's single-use and bound to this repo.
+    Closing before accept makes the handshake fail with HTTP 403."""
+    login = await run_in_threadpool(consume_ws_ticket, ticket, repo) if ticket else None
+    if login is None:
+        await websocket.close(code=1008)
+        return
     await manager.connect(repo, websocket)
     try:
         while True:
@@ -136,6 +172,16 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 
 
 async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:
+    started = time.monotonic()
+    with count_llm_calls() as llm_calls:
+        try:
+            await _run_review_pipeline(repo, pr_number, commit_sha)
+        finally:
+            print(f"[review] {repo}#{pr_number} @ {commit_sha[:7]}: finished in "
+                  f"{time.monotonic() - started:.1f}s with {llm_calls.calls} LLM call(s)")
+
+
+async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:
     update_status(repo, commit_sha, "running")
     await manager.broadcast(repo, {"commit_sha": commit_sha, "stage": "running", "pr_number": pr_number})
 
@@ -157,6 +203,7 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
 
         retriever = _load_retriever(repo)
         all_agent_reports = []
+        vector_errors: list[str] = []  # distinct reasons, in order seen
 
         async def _on_agent_complete(report: AgentReport) -> None:
             await manager.broadcast(repo, {
@@ -167,11 +214,18 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
                 "error": report.error,
             })
 
-        for f in files:
-            patch = f.get("patch")
-            if not patch:
-                continue
-            changed_file = f["filename"]
+        # Lockfiles, generated/vendored paths, removed/binary files and huge
+        # patches are skipped before any LLM call; docs get only the
+        # documentation agent; the rest is capped at MAX_FILES_PER_REVIEW.
+        plan = plan_review_files(files)
+        print(f"[webhook] {repo}#{pr_number}: reviewing {len(plan.to_review)} file(s), "
+              f"skipping {len(plan.skipped)}")
+        for s in plan.skipped:
+            print(f"    skipped {s.filename}: {s.reason}")
+
+        for target in plan.to_review:
+            patch = target.patch
+            changed_file = target.filename
             await manager.broadcast(repo, {"commit_sha": commit_sha, "stage": "file_started", "file": changed_file})
             changed_fn_names = [fn.name for fn in extract_functions(strip_diff_to_source(patch))]
             context = retriever.retrieve_for_diff(
@@ -180,18 +234,24 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
                 diff_snippet=patch,
                 changed_fn_names=changed_fn_names,
             )
+            vector_error = context.get("vector_context_error")
+            if vector_error and vector_error not in vector_errors:
+                vector_errors.append(vector_error)
             context_string = retriever.build_agent_context_string(context)
             reports = await run_agents_parallel(
                 changed_file=changed_file,
                 diff_snippet=patch,
                 retrieved_context=context_string,
                 on_agent_complete=_on_agent_complete,
+                agent_functions=[run_documentation_agent] if target.docs_only else None,
             )
             all_agent_reports.extend(reports)
 
         review = build_review_report(
             pr_number=pr_number, repo=repo, commit_sha=commit_sha, agent_reports=all_agent_reports,
         )
+        review.warnings = [f"vector context unavailable: {reason}" for reason in vector_errors]
+        review.skipped_files = [{"filename": s.filename, "reason": s.reason} for s in plan.skipped]
 
         # Fix 5.1: generate markdown FIRST, attach it to the review object,
         # THEN persist — previously save_result ran before synthesize_markdown

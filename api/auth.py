@@ -1,13 +1,21 @@
+import re
 import secrets
+import threading
 import time
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Header, HTTPException, Query, Depends
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from config import settings
-from pipeline.session_store import create_session, get_session, delete_session
-from tools.github_tools import exchange_oauth_code, get_authenticated_user
+from pipeline.session_store import (
+    create_handoff_code, redeem_handoff_code, get_session, delete_session, SESSION_TTL_SECONDS,
+)
+from tools.github_tools import (
+    exchange_oauth_code, get_authenticated_user, get_installation_token,
+    check_repo_read_permission, is_repo_private,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -60,10 +68,26 @@ def callback(code: str = Query(...), state: str = Query(...)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"GitHub OAuth exchange failed: {e}")
 
-    session_id = create_session(user["login"], user["avatar_url"], user_token)
+    # The user's OAuth token is only needed to learn who logged in; it's
+    # dropped here, never stored. The dashboard gets a one-time handoff code,
+    # not the session itself — see create_handoff_code.
+    handoff_code = create_handoff_code(user["login"], user["avatar_url"])
+    return RedirectResponse(f"{settings.DASHBOARD_BASE_URL}/?{urlencode({'code': handoff_code})}")
 
-    redirect_url = f"{settings.DASHBOARD_BASE_URL}/?session={session_id}"
-    return RedirectResponse(redirect_url)
+
+class HandoffExchange(BaseModel):
+    code: str
+
+
+@router.post("/exchange")
+def exchange(body: HandoffExchange):
+    """Trades the one-time ?code= from the callback redirect for a session
+    token. The code goes in the JSON body so the session-bearing response
+    never touches a URL. 401 for unknown, expired or already used codes."""
+    session_id = redeem_handoff_code(body.code)
+    if session_id is None:
+        raise HTTPException(status_code=401, detail="login code is invalid, expired or already used — please sign in again")
+    return {"session_token": session_id, "expires_in": SESSION_TTL_SECONDS}
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> dict:
@@ -80,6 +104,70 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict:
     if session is None:
         raise HTTPException(status_code=401, detail="session expired or invalid — please sign in again")
     return session
+
+
+_REPO_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def validate_repo_name(repo: str) -> None:
+    """Raises 400 unless `repo` is a plain 'owner/name'. Every route that
+    takes ?repo= runs this before touching the database or calling GitHub."""
+    if not _REPO_NAME_RE.match(repo) or ".." in repo:
+        raise HTTPException(status_code=400, detail="repo must be 'owner/name'")
+_REPO_ACCESS_TTL_SECONDS = 300
+
+# Both caches are in-process and only ever hold results that are safe to
+# reuse for a few minutes: "allowed" read checks (a denial is never cached,
+# so a newly added collaborator gets in immediately) and repo visibility.
+# Revoked access lingers for at most _REPO_ACCESS_TTL_SECONDS.
+_read_access_cache: dict[tuple[str, str], float] = {}  # (login, repo) -> expires_at
+_visibility_cache: dict[str, tuple[bool, float]] = {}  # repo -> (is_private, expires_at)
+_cache_lock = threading.Lock()
+
+
+def _repo_is_private_cached(repo: str, token: str) -> bool:
+    key = repo.lower()
+    now = time.time()
+    with _cache_lock:
+        cached = _visibility_cache.get(key)
+        if cached and cached[1] > now:
+            return cached[0]
+    private = is_repo_private(repo, token=token)
+    with _cache_lock:
+        _visibility_cache[key] = (private, now + _REPO_ACCESS_TTL_SECONDS)
+    return private
+
+
+def check_repo_read_access(repo: str, login: str) -> None:
+    """Raises 400/403/502 unless `login` may read `repo` on GitHub: any
+    logged-in user for a public repo, collaborators (incl. org/team grants)
+    with read or higher for a private one. Shared by require_repo_read and
+    the WebSocket ticket route so the rule lives in one place."""
+    validate_repo_name(repo)
+
+    key = (login.lower(), repo.lower())
+    with _cache_lock:
+        if _read_access_cache.get(key, 0) > time.time():
+            return
+
+    try:
+        token = get_installation_token()
+        allowed = (not _repo_is_private_cached(repo, token)
+                   or check_repo_read_permission(repo, login, token=token))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"failed to check repo access with GitHub: {e}")
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail=f"@{login} does not have read access to {repo}")
+    with _cache_lock:
+        _read_access_cache[key] = time.time() + _REPO_ACCESS_TTL_SECONDS
+
+
+def require_repo_read(repo: str = Query(...), user: dict = Depends(get_current_user)) -> dict:
+    """FastAPI dependency for every dashboard read route — valid session AND
+    read access to ?repo=. Returns the session like get_current_user."""
+    check_repo_read_access(repo, user["github_login"])
+    return user
 
 
 @router.get("/me")
