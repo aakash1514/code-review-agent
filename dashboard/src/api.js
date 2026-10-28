@@ -1,4 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+import { API_BASE } from "./apiBase";
+
 const SESSION_KEY = "session_token";
 
 export class ApiError extends Error {

@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchWsTicket } from "../api";
+import { WS_BASE } from "../apiBase";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-const WS_BASE = API_BASE.replace(/^http/, "ws");
 const RECONNECT_DELAY_MS = 3000;
 
 /**
