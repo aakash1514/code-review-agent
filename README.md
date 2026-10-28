@@ -38,13 +38,14 @@ React dashboard ── live progress over WebSocket, approve / block override
 ## Features
 
 - **Parallel specialist agents.** Security, Architecture, Test Coverage and Documentation agents run concurrently. A slow or failing agent times out without breaking the review.
-- **Review scope.** Lockfiles, generated and vendored paths, removed and binary files, `LICENSE` and patches over `MAX_PATCH_CHARS` are skipped before any LLM call. Docs (`.md`, `.txt`, `.rst`) get only the documentation agent. At most `MAX_FILES_PER_REVIEW` files are reviewed, Python first, then other code, config and docs. Every skipped file is listed with its reason in the PR comment and on the dashboard. All of this is configurable in `config.py`.
-- **Codebase-aware RAG.** Python files are split into function and class chunks with the `ast` module, embedded with `granite-embedding-97m` (384-dim, run locally with sentence-transformers by default), and stored in Qdrant with per-repo filtering. If embedding or Qdrant fails during a review, the review still runs on call-graph context and says "vector context unavailable" in the PR comment and the dashboard.
+- **Review scope.** Lockfiles, generated and vendored paths, removed and binary files, `LICENSE` and patches over `MAX_PATCH_CHARS` are skipped before any LLM call. Docs (`.md`, `.txt`, `.rst`) get only the documentation agent. At most `MAX_FILES_PER_REVIEW` files are reviewed, Python first, then other code, config and docs. Every skipped file is listed with its reason in the PR comment and on the dashboard. `MAX_PATCH_CHARS` and `MAX_FILES_PER_REVIEW` are set through environment variables; the skip patterns are the `REVIEW_SKIP_PATTERNS` list in `config.py`.
+- **Codebase-aware RAG.** Python files are split into function and class chunks with the `ast` module, embedded, and stored in Qdrant with per-repo filtering. Local development defaults to `granite-embedding-97m` (384-dim, run in-process with sentence-transformers or through the Hugging Face Inference API). The container defaults to Amazon Bedrock Titan Text Embeddings V2 (512-dim; 256 and 1024 also supported). Each embedding model gets its own Qdrant collection (`codebase_granite384`, `codebase_titan512`), so vectors from different models never mix. If embedding or Qdrant fails during a review, the review still runs on call-graph context and says "vector context unavailable" in the PR comment and the dashboard.
 - **Call-graph knowledge graph.** Calls, callers and imports for every function, scoped per class. It rebuilds automatically on every push to the default branch.
 - **Severity-ranked synthesis.** Findings are de-duplicated across agents and re-runs, then ranked from CRITICAL to INFO.
 - **Merge gate with human in the loop.** CRITICAL findings set a failed `ai-code-review` commit status. A reviewer can approve or block from the dashboard, and that decision is stored.
 - **Live dashboard.** GitHub OAuth login, per-agent progress over WebSocket, a Monaco side-by-side diff viewer, and a React Flow call-graph view.
-- **Zero-cost stack.** Everything runs on free tiers: OpenAI's open-weight gpt-oss-120b on Groq for reasoning, gpt-oss-20b for simple tasks, with automatic fallback between them. Embeddings run locally.
+- **Free-tier LLMs.** OpenAI's open-weight gpt-oss-120b on Groq for reasoning and gpt-oss-20b for simple tasks, with automatic fallback between them.
+- **Container-ready.** One non-root Docker image (about 115 MB compressed), configured only through environment variables. It writes structured JSON logs, exposes `/healthz`, and shuts down gracefully: reviews still unfinished at shutdown are marked `interrupted` and their GitHub check is set to error.
 
 ## Tech stack
 
@@ -52,10 +53,11 @@ React dashboard ── live progress over WebSocket, approve / block override
 | --- | --- |
 | API | Python, FastAPI, WebSockets |
 | LLM | Groq: gpt-oss-120b + gpt-oss-20b, with fallback |
-| Retrieval | sentence-transformers embeddings on CPU (or the Hugging Face Inference API), Qdrant Cloud, Python `ast` call graph |
-| Storage | SQLite (jobs, results, override decisions) |
+| Retrieval | Amazon Bedrock Titan Text Embeddings V2, or sentence-transformers on CPU (or the Hugging Face Inference API); Qdrant Cloud; Python `ast` call graph |
+| Storage | SQLite (jobs, results, override decisions) and knowledge-graph JSON, both under `DATA_DIR` |
 | GitHub | GitHub App (JWT + installation tokens), webhooks, commit status API, PR comments |
 | Dashboard | React, Vite, Monaco Editor, React Flow + dagre |
+| Runtime | Docker (multi-stage, non-root), uvicorn, structured JSON logs |
 
 ## Project structure
 
@@ -64,7 +66,7 @@ agents/      security, architecture, test-coverage, documentation agents
 api/         webhook server, WebSocket manager, dashboard REST routes
 pipeline/    parallel runner, synthesizer, HITL gate, job store, re-indexer
 rag/         AST chunker, Qdrant indexer, retriever, knowledge graph
-tools/       GitHub API client, code helpers, Groq model client
+tools/       GitHub API client, code helpers, Groq model client, structured logging
 models/      Pydantic models for findings and reports
 scripts/     index_repo.py — one-off indexing of a repository
 dashboard/   React + Vite frontend
@@ -74,32 +76,48 @@ dashboard/   React + Vite frontend
 
 **Prerequisites:** Python 3.11+, Node.js 18+, a GitHub App installed on the target repo, and free accounts on Groq and Qdrant Cloud (plus Hugging Face if you use `EMBEDDING_PROVIDER=hf_api`).
 
-1. **Configure.** Copy [`config.example.py`](config.example.py) to `config.py` (it's git-ignored) and fill in these settings:
+1. **Configure.** Copy [`.env.example`](.env.example) to `.env` (it's git-ignored) and fill it in. `config.py` is tracked and holds no secrets: it reads every setting from environment variables, loading `.env` first. Leave a setting empty to use its default.
 
    | Setting | What it is |
    | --- | --- |
    | `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` | Your GitHub App's IDs |
-   | `GITHUB_PRIVATE_KEY_PATH` | Path to the App's `.pem` private key |
+   | `GITHUB_PRIVATE_KEY` | The App's private key as a PEM string (newlines written as `\n`). Takes precedence over `GITHUB_PRIVATE_KEY_PATH` |
+   | `GITHUB_PRIVATE_KEY_PATH` | Path to the App's `.pem` private key. Default `./github-app-private-key.pem` |
    | `GITHUB_WEBHOOK_SECRET` | Secret used to verify webhook signatures |
-   | `GROQ_API_KEY`, `GROQ_MODEL_REASONING`, `GROQ_MODEL_LIGHT` | Groq key and model IDs, e.g. `openai/gpt-oss-120b` and `openai/gpt-oss-20b` |
-   | `EMBEDDING_PROVIDER` | `local` (default): embed in-process with sentence-transformers on CPU. `hf_api`: use the Hugging Face Inference API |
+   | `GROQ_API_KEY`, `GROQ_MODEL_REASONING`, `GROQ_MODEL_LIGHT` | Groq key and model IDs. Defaults `openai/gpt-oss-120b` and `openai/gpt-oss-20b` |
+   | `EMBEDDING_PROVIDER` | `local` (default): embed in-process with sentence-transformers on CPU. `hf_api`: use the Hugging Face Inference API. `bedrock`: Amazon Bedrock Titan Text Embeddings V2 (`amazon.titan-embed-text-v2:0`) |
    | `HF_TOKEN` | Hugging Face token, only needed for `EMBEDDING_PROVIDER=hf_api` |
+   | `AWS_REGION` | AWS region. Default `ap-south-1`. Credentials come from `AWS_PROFILE`, environment keys or a task role |
+   | `BEDROCK_EMBED_REGION` | Region for Bedrock embedding calls. Default: `AWS_REGION` |
+   | `BEDROCK_EMBED_DIM` | Titan V2 vector size: `256`, `512` (default) or `1024`. Each size has its own collection (`codebase_titan<dim>`) |
    | `QDRANT_URL`, `QDRANT_API_KEY` | Qdrant Cloud cluster |
    | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET` | OAuth credentials for dashboard login |
-   | `GITHUB_OAUTH_REDIRECT_URI` | OAuth callback, e.g. `http://localhost:8000/auth/callback` |
-   | `DASHBOARD_BASE_URL` | Where the dashboard runs, e.g. `http://localhost:5173` (login redirects back here) |
-   | `DATABASE_URL` | e.g. `sqlite:///./review_agent.db` |
+   | `GITHUB_OAUTH_REDIRECT_URI` | OAuth callback. Default `http://localhost:8000/auth/callback` |
+   | `DASHBOARD_BASE_URL` | Where the dashboard runs (login redirects back here). Default `http://localhost:5173` |
+   | `DATA_DIR` | Holds the SQLite database and `knowledge_graph_*.json`. Default `./data` (`/data` in the container) |
+   | `DATABASE_URL` | Optional. Default `sqlite:///<DATA_DIR>/review_agent.db` |
+   | `MAX_PATCH_CHARS`, `MAX_FILES_PER_REVIEW` | Review scope limits. Defaults `20000` and `25` |
+   | `LOG_FORMAT` | `text` (default locally) or `json` (default in the container) |
+   | `ORIGIN_VERIFY_SECRET` | Empty (default) turns the check off. When set, every request except `/healthz` needs a matching `X-Origin-Verify` header |
 
    **Set up dashboard login.** Dashboard login uses your GitHub App's own OAuth credentials. In the GitHub App's settings (*Settings → Developer settings → GitHub Apps → your app*), set the callback URL to `http://localhost:8000/auth/callback` and generate a client secret. Copy the App's client ID and that secret into `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`. A standalone OAuth App with the same callback URL also works.
 
 2. **Install and index the target repo.**
 
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements-local-embed.txt -r requirements-dev.txt
    python -m scripts.index_repo --path /path/to/repo --repo owner/name
    ```
 
-   `requirements.txt` pulls CPU-only PyTorch from PyTorch's own package index (the `--extra-index-url` line), so no CUDA libraries are installed. The embedding stack (PyTorch CPU, sentence-transformers, transformers and their dependencies) adds about 1.1 GB on disk, including a roughly 125 MB PyTorch download. The first run also downloads the embedding model (about 210 MB) into the Hugging Face cache. The API loads it once at startup, and refuses to start if the configured model doesn't return 384-dim vectors.
+   The dependencies are split into three files:
+
+   - `requirements.txt`: the core runtime, without PyTorch. It's all the Docker image installs, and it's enough for `EMBEDDING_PROVIDER=hf_api` or `bedrock`.
+   - `requirements-local-embed.txt`: the core runtime plus CPU-only PyTorch and sentence-transformers, for `EMBEDDING_PROVIDER=local`.
+   - `requirements-dev.txt`: test tools (pytest, httpx, pytest-cov) and `botocore[crt]`, which boto3 needs to use `aws login` credentials.
+
+   Indexing writes to the configured embedding model's collection, so index again after switching `EMBEDDING_PROVIDER` or `BEDROCK_EMBED_DIM`.
+
+   `requirements-local-embed.txt` pulls CPU-only PyTorch from PyTorch's own package index (the `--extra-index-url` line), so no CUDA libraries are installed. The embedding stack (PyTorch CPU, sentence-transformers, transformers and their dependencies) adds about 1.1 GB on disk, including a roughly 125 MB PyTorch download. The first run also downloads the embedding model (about 210 MB) into the Hugging Face cache. The API loads it once at startup, and refuses to start if the configured model doesn't return vectors of the expected size.
 
 3. **Start the API.**
 
@@ -117,12 +135,47 @@ dashboard/   React + Vite frontend
    npm run dev   # http://localhost:5173
    ```
 
+   The dashboard calls the API with same-origin relative URLs. The Vite dev server proxies `/api`, `/auth` and `/ws` to `http://localhost:8000`, so there's nothing to configure. `VITE_API_BASE_URL` is optional and only needed to point at a different API.
+
 5. Open a pull request on the indexed repo and watch the review run in the dashboard.
+
+6. **Tests:** `python -m pytest` (no network or real keys needed).
+
+## Running in Docker
+
+The same image that will run in the cloud also runs locally with Docker Compose. It defaults to JSON logs, `DATA_DIR=/data` (a named volume) and Bedrock embeddings. Compose reads `.env` for the GitHub App, Groq, Qdrant and OAuth settings, and mounts the GitHub App key from `./github-app-private-key.pem` as a compose secret.
+
+1. **Get short-lived AWS credentials** for Bedrock:
+
+   ```bash
+   aws login --profile <your-profile>
+   aws configure export-credentials --profile <your-profile> --format env-no-export > .env.aws
+   ```
+
+   `.env.aws` is git- and docker-ignored, so it never ends up in a commit or in the image. It expires with your login session; re-run both lines and `docker compose up -d` to refresh it.
+
+2. **Build and start:**
+
+   ```bash
+   docker compose up -d --build
+   docker compose logs -f app
+   ```
+
+   Stop any local `uvicorn --port 8000` first. The container listens on port 8000, so your tunnel keeps working. `GET /healthz` responds without calling any external service.
+
+3. **Index a repo inside the container.** The container has no checkout of the repo, so it indexes through the GitHub API:
+
+   ```bash
+   docker compose exec app python -c "from pipeline.reindexer import rebuild_index_for_repo as r; from tools.github_tools import get_installation_token as t; print(r('owner/name', 'main', t()))"
+   ```
+
+**Shutdown.** On `SIGTERM` (for example from `docker compose down`), uvicorn gets up to 90 seconds to finish (`--timeout-graceful-shutdown 90`; compose's `stop_grace_period` is 120 s). Reviews still pending or running are marked `interrupted`, and their GitHub check is set to error with "push again to re-run". The same cleanup runs at startup for anything a crash left behind.
 
 ## API
 
 | Method | Route | Purpose | Login required |
 | --- | --- | --- | --- |
+| GET | `/healthz` | Health check; makes no external calls | No |
 | POST | `/webhook` | GitHub App webhook receiver (HMAC-verified) | No |
 | WS | `/ws/reviews?repo=owner/name&ticket=<ticket>` | Live review progress | Ticket (see below) |
 | GET | `/api/reviews?repo=owner/name` | List reviews | Yes + read access |
