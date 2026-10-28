@@ -1,11 +1,18 @@
 import hashlib, hmac, json, time, traceback
+from tools.logs import configure_logging, log_context, log_event
+
+# First, so every later line (imports included) is formatted as LOG_FORMAT says.
+configure_logging()
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pipeline.reindexer import rebuild_index_for_repo
 from config import settings
 from models.findings import AgentReport
-from pipeline.job_store import init_db, sweep_stuck_jobs, try_start_job, update_status, save_result, is_stale_sha
+from pipeline.job_store import (
+    init_db, interrupt_active_jobs, try_start_job, update_status, save_result, is_stale_sha, get_job,
+)
 from pipeline.runner import run_agents_parallel
 from pipeline.file_filter import plan_review_files
 from agents.documentation_agent import run_documentation_agent
@@ -17,10 +24,11 @@ from tools.code_tools import extract_functions, strip_diff_to_source
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
 from rag.indexer import CodebaseIndexer
 from rag.retriever import SmartRetriever, short_error
-from rag.embeddings import EMBED_DIM, EMBED_MODEL, EmbeddingConfigError, verify_embedder
+from rag.embeddings import EmbeddingConfigError, collection_name, verify_embedder
 from api.dashboard import router as dashboard_router
 from api.ws_manager import manager
 from api.auth import router as auth_router
+from api.origin_verify import OriginVerifyMiddleware
 from pipeline.session_store import (
     init_session_db, purge_expired_ws_tickets, purge_expired_sessions, purge_expired_handoff_codes,
     consume_ws_ticket,
@@ -28,6 +36,35 @@ from pipeline.session_store import (
 from starlette.concurrency import run_in_threadpool
 
 HANDLED_ACTIONS = {"opened", "synchronize"}
+INTERRUPTED_STATUS_TEXT = "Interrupted by a restart or deploy. Push again to re-run."
+
+
+def _report_interrupted(jobs: list[dict]) -> None:
+    """Best effort: turn each abandoned review's 'pending' commit status into
+    'error', so the PR isn't blocked by a check that will never finish.
+    Never raises: shutdown and startup must go on even if GitHub is down."""
+    try:
+        token = get_installation_token()
+    except Exception as e:
+        print(f"[lifecycle] could not update GitHub status for {len(jobs)} interrupted review(s): "
+              f"{type(e).__name__}: {e}")
+        return
+    for job in jobs:
+        try:
+            set_commit_status(job["repo"], job["commit_sha"], "error", INTERRUPTED_STATUS_TEXT,
+                              context=DEFAULT_STATUS_CONTEXT, token=token)
+        except Exception as e:
+            print(f"[lifecycle] status update failed for {job['repo']}#{job['pr_number']} "
+                  f"@ {job['commit_sha'][:7]}: {type(e).__name__}: {e}")
+
+
+async def _interrupt_active_jobs(phase: str, reason: str) -> None:
+    jobs = interrupt_active_jobs(reason)
+    if jobs:
+        print(f"[{phase}] marked {len(jobs)} unfinished review(s) interrupted: "
+              + ", ".join(f"{j['repo']}#{j['pr_number']}@{j['commit_sha'][:7]}" for j in jobs))
+        await run_in_threadpool(_report_interrupted, jobs)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,26 +76,43 @@ async def lifespan(app: FastAPI):
         purged = purge()
         if purged:
             print(f"[startup] purged {purged} expired {what}")
-    swept = sweep_stuck_jobs()
-    if swept:
-        print(f"[startup] swept {swept} stuck job(s) from a previous run")
+    # Anything still pending/running belongs to a previous process that
+    # didn't shut down cleanly (crash, SIGKILL): this is the only process.
+    await _interrupt_active_jobs("startup", "interrupted: the server restarted before this review finished")
     # A wrong provider name or vector size is a config bug: refuse to start.
     # Anything else (no network, no API credits) only costs reviews their
     # similar-code context, so warn and keep serving.
     try:
         embedder = await run_in_threadpool(verify_embedder)
-        print(f"[startup] embeddings: {embedder.name} ({EMBED_MODEL}, {EMBED_DIM}-dim) ok")
+        print(f"[startup] embeddings: {embedder.name} ({embedder.model}, {embedder.dim}-dim, "
+              f"collection {collection_name(embedder)}) ok")
     except EmbeddingConfigError:
         raise
     except Exception as e:
         print(f"[startup] WARNING: embeddings unavailable ({type(e).__name__}: {e}) "
               f"— reviews will run without similar-code context")
     yield
+    # Shutdown (SIGTERM from an ECS deploy, Ctrl+C, --reload). uvicorn has
+    # already waited for in-flight requests and background reviews (up to
+    # --timeout-graceful-shutdown) and cancelled the rest, so anything still
+    # pending/running here will never finish.
+    await _interrupt_active_jobs("shutdown", "interrupted by a server shutdown (deploy or restart)")
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+# Added last, so it runs first: requests that didn't come through CloudFront
+# are rejected before anything else (no-op when ORIGIN_VERIFY_SECRET is empty).
+app.add_middleware(OriginVerifyMiddleware)
 app.include_router(dashboard_router)
 app.include_router(auth_router)
+
+
+@app.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
+def healthz() -> dict:
+    """Liveness check for the ALB target group and the container HEALTHCHECK.
+    Deliberately cheap: no GitHub, LLM, Qdrant or database call, so a slow
+    dependency can't get a healthy task killed and restarted."""
+    return {"status": "ok"}
 
 
 def _verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
@@ -91,13 +145,17 @@ def _run_reindex_task(repo: str, ref: str) -> None:
     everything it calls (github_tools, CodebaseIndexer, HF embeddings) are
     already synchronous/requests-based, matching the rest of this project.
     """
-    try:
-        token = get_installation_token()
-        stats = rebuild_index_for_repo(repo, ref, token)
-        print(f"[reindex] {repo}@{ref[:7]}: {stats['functions']} functions, {stats['chunks']} chunks re-indexed")
-    except Exception as e:
-        traceback.print_exc()
-        print(f"[reindex] FAILED for {repo}@{ref[:7]}: {type(e).__name__}: {e}")
+    started = time.monotonic()
+    with log_context(repo=repo, commit=ref[:7]):
+        try:
+            token = get_installation_token()
+            stats = rebuild_index_for_repo(repo, ref, token)
+            log_event("reindex_finished", status="complete", functions=stats["functions"],
+                      chunks=stats["chunks"], duration_ms=int((time.monotonic() - started) * 1000))
+        except Exception as e:
+            traceback.print_exc()
+            log_event("reindex_finished", status="failed", error=f"{type(e).__name__}: {e}",
+                      duration_ms=int((time.monotonic() - started) * 1000))
 
 @app.websocket("/ws/reviews")
 async def reviews_ws(websocket: WebSocket, repo: str, ticket: str | None = None):
@@ -173,12 +231,15 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 
 async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:
     started = time.monotonic()
-    with count_llm_calls() as llm_calls:
+    # Every log line of this review, including from agent threads, carries
+    # repo/pr/commit; the closing review_finished event has the numbers.
+    with log_context(repo=repo, pr=pr_number, commit=commit_sha[:7]), count_llm_calls() as llm_calls:
         try:
             await _run_review_pipeline(repo, pr_number, commit_sha)
         finally:
-            print(f"[review] {repo}#{pr_number} @ {commit_sha[:7]}: finished in "
-                  f"{time.monotonic() - started:.1f}s with {llm_calls.calls} LLM call(s)")
+            job = get_job(repo, commit_sha) or {}
+            log_event("review_finished", status=job.get("status"),
+                      duration_ms=int((time.monotonic() - started) * 1000), llm_calls=llm_calls.calls)
 
 
 async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:

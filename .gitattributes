@@ -1,0 +1,5 @@
+# Let Git normalise line endings for text files (CRLF on Windows checkouts,
+# LF in the repo), but always keep LF in files a Linux container executes.
+* text=auto
+Dockerfile text eol=lf
+*.sh text eol=lf

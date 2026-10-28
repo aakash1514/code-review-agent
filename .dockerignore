@@ -1,0 +1,39 @@
+# Keep the build context small and free of secrets. The Dockerfile also
+# copies an explicit list of paths, so this is the second line of defence.
+
+# Secrets and local config
+.env
+.env.*
+*.pem
+**/*.pem
+
+# Runtime data and local databases
+data/
+*.db
+*.db-*
+knowledge_graph*.json
+
+# Not needed in the backend image
+.git/
+.github/
+dashboard/
+tests/
+docs/
+venv/
+.venv/
+env/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.vscode/
+*.log
+*.md
+LICENSE
+requirements-dev.txt
+requirements-local-embed.txt
+pytest.ini
+config.example.py
+Dockerfile
+.dockerignore

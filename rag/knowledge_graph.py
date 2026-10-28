@@ -3,6 +3,9 @@ import json
 import os
 import re
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
+
+from config import settings
 
 
 @dataclass
@@ -16,7 +19,7 @@ class FunctionNode:
     class_name: str | None = None  # None for module-level functions
 
 
-def kg_path_for_repo(repo: str, base_dir: str = ".") -> str:
+def kg_path_for_repo(repo: str, base_dir: str | None = None) -> str:
     """
     Deterministic, filesystem-safe path for a given repo's knowledge graph
     JSON file. Replaces the old hardcoded "knowledge_graph.json" — that
@@ -25,9 +28,13 @@ def kg_path_for_repo(repo: str, base_dir: str = ".") -> str:
     code-review-agent-test: it clobbered the main project's own 28-function
     graph). "owner/name" -> "owner_name" to keep it a valid filename on
     Windows and Unix alike.
+
+    base_dir defaults to settings.DATA_DIR (./data locally, /data in the
+    container), next to the SQLite DB.
     """
     safe = re.sub(r"[^a-zA-Z0-9_-]", "_", repo)
-    return os.path.join(base_dir, f"knowledge_graph_{safe}.json")
+    base = base_dir if base_dir is not None else getattr(settings, "DATA_DIR", ".")
+    return str(Path(base) / f"knowledge_graph_{safe}.json")
 
 
 class KnowledgeGraph:

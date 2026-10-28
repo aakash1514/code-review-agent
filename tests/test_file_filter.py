@@ -188,7 +188,7 @@ def test_pipeline_reviews_only_planned_files_with_the_right_agents(monkeypatch, 
     assert "4 file(s) not reviewed" in github.post_pr_review.call_args.args[2]
     out = capsys.readouterr().out
     assert "reviewing 2 file(s), skipping 4" in out
-    assert "o/r#1 @ sha1: finished in" in out and "with 0 LLM call(s)" in out
+    assert "[review_finished] repo=o/r pr=1 commit=sha1 status=complete" in out and "llm_calls=0" in out
 
 
 # --- LLM call counting -----------------------------------------------------------

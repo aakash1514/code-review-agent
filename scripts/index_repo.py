@@ -1,5 +1,6 @@
 import argparse
 from pipeline.reindexer import index_repo_from_local_path
+from rag.embeddings import collection_name, get_embedder
 from rag.knowledge_graph import kg_path_for_repo
 
 
@@ -15,7 +16,7 @@ def main():
     print(f"Building knowledge graph for {args.repo}...")
     stats = index_repo_from_local_path(args.path, args.repo, kg_output=kg_output)
     print(f"  {stats['functions']} functions indexed into graph -> saved to {kg_output}")
-    print(f"  {stats['chunks']} chunks created and indexed into Qdrant collection 'codebase', tagged repo={args.repo!r}")
+    print(f"  {stats['chunks']} chunks created and indexed into Qdrant collection {collection_name(get_embedder())!r}, tagged repo={args.repo!r}")
     print("Done.")
 
 

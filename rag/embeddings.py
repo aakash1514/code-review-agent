@@ -1,14 +1,21 @@
 """Text embeddings for the RAG index, behind one interface.
 
 settings.EMBEDDING_PROVIDER picks the backend:
-  "local"  (default) runs the model in-process with sentence-transformers on
-           CPU: no API credits, no network after the first model download.
-  "hf_api" calls the Hugging Face Inference API with HF_TOKEN.
+  "local"   (default) runs granite-embedding-97m in-process with
+            sentence-transformers on CPU: no API credits, no network after
+            the first model download. Needs requirements-local-embed.txt.
+  "hf_api"  the same model through the Hugging Face Inference API (HF_TOKEN).
+  "bedrock" Amazon Titan Text Embeddings V2 on Bedrock, through boto3 and the
+            normal AWS credential chain (AWS_PROFILE locally, the ECS task
+            role in the cloud).
 
-Both produce the same vectors for the same text (the model's own pooling,
-L2-normalised, as the Inference API returns them), so an index built with
-one can be searched with the other.
+"local" and "hf_api" produce the same vectors for the same text, so an index
+built with one can be searched with the other. Titan vectors live in a
+different space and have a different size, so every model family gets its
+own Qdrant collection (see collection_name()) and the two never mix.
 """
+import json
+import os
 import threading
 import time
 
@@ -16,9 +23,31 @@ import numpy as np
 
 from config import settings
 
+# The granite model used by "local" and "hf_api". The names EMBED_MODEL and
+# EMBED_DIM are kept because callers and tests import them; they describe
+# this model only. Use embedder.model / embedder.dim for the active one.
 EMBED_MODEL = "ibm-granite/granite-embedding-97m-multilingual-r2"
 EMBED_DIM = 384
-PROVIDERS = ("local", "hf_api")
+
+TITAN_MODEL = "amazon.titan-embed-text-v2:0"
+TITAN_DIMS = (256, 512, 1024)
+TITAN_DEFAULT_DIM = 512
+# Titan V2 takes at most 8,192 tokens (and 50,000 characters) per input.
+# Code can run below 3 characters per token, so cap well under that; the
+# local model truncates long inputs too (at 512 tokens), so this is no loss.
+TITAN_MAX_CHARS = 16_000
+
+PROVIDERS = ("local", "hf_api", "bedrock")
+COLLECTION_PREFIX = "codebase"
+
+
+def _setting(name: str, default=None):
+    """settings.<name>, else the environment variable, else default. New
+    settings work before config.py declares them."""
+    value = getattr(settings, name, None)
+    if value in (None, ""):
+        value = os.getenv(name)
+    return default if value in (None, "") else value
 
 
 class EmbeddingConfigError(RuntimeError):
@@ -29,22 +58,32 @@ class EmbeddingDimensionError(EmbeddingConfigError):
     pass
 
 
-def _checked(vectors: list[list[float]], expected_count: int) -> list[list[float]]:
+def _checked(vectors: list[list[float]], expected_count: int, model: str, dim: int) -> list[list[float]]:
     if len(vectors) != expected_count:
         raise EmbeddingDimensionError(f"expected {expected_count} embeddings, got {len(vectors)}")
     for vec in vectors:
-        if len(vec) != EMBED_DIM:
+        if len(vec) != dim:
             raise EmbeddingDimensionError(
-                f"{EMBED_MODEL} returned {len(vec)}-dim vectors; the Qdrant collection expects {EMBED_DIM}"
+                f"{model} returned {len(vec)}-dim vectors; the Qdrant collection expects {dim}"
             )
     return vectors
 
 
 class Embedder:
     name = "base"
+    model = EMBED_MODEL
+    dim = EMBED_DIM
+    # Names the vector space; part of the Qdrant collection name.
+    index_tag = "granite384"
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         raise NotImplementedError
+
+
+def collection_name(embedder: Embedder) -> str:
+    """Qdrant collection for this embedder's vectors, e.g. codebase_granite384
+    or codebase_titan512."""
+    return f"{COLLECTION_PREFIX}_{embedder.index_tag}"
 
 
 _model = None
@@ -81,7 +120,7 @@ class LocalEmbedder(Embedder):
             convert_to_numpy=True,
             show_progress_bar=False,
         )
-        return _checked(np.asarray(vectors).tolist(), len(texts))
+        return _checked(np.asarray(vectors).tolist(), len(texts), self.model, self.dim)
 
 
 class HFApiEmbedder(Embedder):
@@ -104,7 +143,7 @@ class HFApiEmbedder(Embedder):
             # Token-level output instead of pooled vectors: fall back to one
             # call per text, so padding never leaks into the mean.
             vectors = [self._pool(np.array(self._call(text))) for text in texts]
-        return _checked(vectors, len(texts))
+        return _checked(vectors, len(texts), self.model, self.dim)
 
     @staticmethod
     def _pool(arr: np.ndarray) -> list[float]:
@@ -128,6 +167,61 @@ class HFApiEmbedder(Embedder):
                 time.sleep(wait)
 
 
+class BedrockEmbedder(Embedder):
+    """Titan Text Embeddings V2 through bedrock-runtime InvokeModel.
+
+    Settings (settings.<name> or environment variable):
+      BEDROCK_EMBED_DIM     256, 512 (default) or 1024
+      BEDROCK_EMBED_REGION  region to call; defaults to AWS_REGION, then ap-south-1
+
+    Titan embeds one text per call. Throttling and transient errors are
+    retried by botocore ("standard" mode, 5 attempts); access-denied and
+    validation errors are not, and surface to the caller.
+    """
+    name = "bedrock"
+    model = TITAN_MODEL
+
+    def __init__(self, client=None, dim: int | None = None, region: str | None = None):
+        try:
+            dim = int(dim or _setting("BEDROCK_EMBED_DIM", TITAN_DEFAULT_DIM))
+        except (TypeError, ValueError):
+            raise EmbeddingConfigError(f"BEDROCK_EMBED_DIM must be one of {TITAN_DIMS}") from None
+        if dim not in TITAN_DIMS:
+            raise EmbeddingConfigError(f"BEDROCK_EMBED_DIM must be one of {TITAN_DIMS}, got {dim}")
+        self.dim = dim
+        self.index_tag = f"titan{dim}"
+        self.region = region or _setting("BEDROCK_EMBED_REGION") or _setting("AWS_REGION", "ap-south-1")
+        if client is None:
+            import boto3
+            from botocore.config import Config
+            client = boto3.client(
+                "bedrock-runtime",
+                region_name=self.region,
+                config=Config(retries={"mode": "standard", "max_attempts": 5},
+                              connect_timeout=5, read_timeout=30),
+            )
+        self.client = client
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        return _checked([self._embed_one(t) for t in texts], len(texts), self.model, self.dim)
+
+    def _embed_one(self, text: str) -> list[float]:
+        # Titan rejects blank input; an empty chunk still needs a vector.
+        text = text[:TITAN_MAX_CHARS] if text and text.strip() else "(empty)"
+        body = {"inputText": text, "dimensions": self.dim, "normalize": True}
+        response = self.client.invoke_model(
+            modelId=self.model,
+            body=json.dumps(body),
+            contentType="application/json",
+            accept="application/json",
+        )
+        return json.loads(response["body"].read())["embedding"]
+
+
+_FACTORIES = {"local": LocalEmbedder, "hf_api": HFApiEmbedder, "bedrock": BedrockEmbedder}
+
 _embedders: dict[str, Embedder] = {}
 _embedders_lock = threading.Lock()
 
@@ -139,14 +233,14 @@ def get_embedder(provider: str | None = None) -> Embedder:
         raise EmbeddingConfigError(f"EMBEDDING_PROVIDER must be one of {PROVIDERS}, got {provider!r}")
     with _embedders_lock:
         if provider not in _embedders:
-            _embedders[provider] = LocalEmbedder() if provider == "local" else HFApiEmbedder()
+            _embedders[provider] = _FACTORIES[provider]()
         return _embedders[provider]
 
 
 def verify_embedder(embedder: Embedder | None = None) -> Embedder:
     """Startup check: embeds one probe text and raises EmbeddingDimensionError
-    unless it comes back as one EMBED_DIM vector. For "local" this also loads
-    the model, so the first review doesn't pay for it."""
+    unless it comes back as one vector of the embedder's dimension. For
+    "local" this also loads the model, so the first review doesn't pay for it."""
     embedder = embedder or get_embedder()
     embedder.embed(["embedding dimension check"])
     return embedder

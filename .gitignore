@@ -40,10 +40,12 @@ Thumbs.db
 tmp/
 temp/
 
-config.py
 github-app-private-key.pem
+*.pem
 review_agent.db
 knowledge_graph*.json
+# Runtime data (SQLite DB, knowledge graphs): DATA_DIR, ./data by default
+data/
 interview-prep.html
 review_agent.db-shm
 review_agent.db-wal

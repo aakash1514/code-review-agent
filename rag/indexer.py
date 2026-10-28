@@ -2,10 +2,8 @@ import hashlib
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from rag.chunker import CodeChunk
-from rag.embeddings import EMBED_DIM, EMBED_MODEL, Embedder, get_embedder  # noqa: F401 (re-exported)
+from rag.embeddings import EMBED_DIM, EMBED_MODEL, Embedder, collection_name, get_embedder  # noqa: F401 (re-exported)
 from config import settings
-
-COLLECTION_NAME = "codebase"
 
 
 def _stable_point_id(repo: str, fn_key: str) -> int:
@@ -25,33 +23,39 @@ def _stable_point_id(repo: str, fn_key: str) -> int:
 class CodebaseIndexer:
     def __init__(self, embedder: Embedder | None = None):
         """embedder defaults to the one EMBEDDING_PROVIDER selects (see
-        rag/embeddings.py); the local model is shared process-wide."""
+        rag/embeddings.py); the local model is shared process-wide.
+
+        Each embedding model family has its own collection, named after it
+        (codebase_granite384, codebase_titan512, ...), so vectors from
+        different models never end up in the same index."""
         self.client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
         self.embedder = embedder or get_embedder()
+        self.collection = collection_name(self.embedder)
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
         return self.embedder.embed(texts)
 
     def ensure_collection(self) -> None:
         existing = [c.name for c in self.client.get_collections().collections]
-        if COLLECTION_NAME in existing:
-            info = self.client.get_collection(COLLECTION_NAME)
+        if self.collection in existing:
+            info = self.client.get_collection(self.collection)
             current_dim = info.config.params.vectors.size
-            if current_dim != EMBED_DIM:
-                print(f"    Collection dim mismatch (has {current_dim}, need {EMBED_DIM}) — recreating.")
-                self.client.delete_collection(COLLECTION_NAME)
-                existing.remove(COLLECTION_NAME)
+            if current_dim != self.embedder.dim:
+                print(f"    Collection {self.collection} dim mismatch "
+                      f"(has {current_dim}, need {self.embedder.dim}) — recreating.")
+                self.client.delete_collection(self.collection)
+                existing.remove(self.collection)
 
-        if COLLECTION_NAME not in existing:
+        if self.collection not in existing:
             self.client.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
+                collection_name=self.collection,
+                vectors_config=VectorParams(size=self.embedder.dim, distance=Distance.COSINE),
             )
             # "repo" is the field the cross-repo isolation fix depends on —
             # every search() call below filters on it. Indexed as keyword
             # for exact-match filtering, same as the other payload fields.
             for field_name in ["repo", "file_path", "chunk_type", "name", "fn_key"]:
-                self.client.create_payload_index(COLLECTION_NAME, field_name, field_schema="keyword")
+                self.client.create_payload_index(self.collection, field_name, field_schema="keyword")
 
     def index_chunks(self, chunks: list[CodeChunk], repo: str, batch_size: int = 20) -> None:
         """
@@ -86,7 +90,7 @@ class CodebaseIndexer:
                 )
                 for c, vec in zip(batch, vectors)
             ]
-            self.client.upsert(collection_name=COLLECTION_NAME, points=points)
+            self.client.upsert(collection_name=self.collection, points=points)
             print(f"    Indexed {min(i + batch_size, len(chunks))}/{len(chunks)} chunks")
 
     def search(
@@ -111,15 +115,13 @@ class CodebaseIndexer:
         query_filter = Filter(must=must_conditions)
 
         results = self.client.query_points(
-            collection_name=COLLECTION_NAME,
+            collection_name=self.collection,
             query=vector,
             limit=limit,
             query_filter=query_filter,
         )
         return [point.payload for point in results.points]
-    
 
-    
     def delete_repo(self, repo: str) -> None:
         """
         Deletes every Qdrant point tagged with this repo. Call before a full
@@ -132,6 +134,6 @@ class CodebaseIndexer:
         """
         self.ensure_collection()
         self.client.delete(
-            collection_name=COLLECTION_NAME,
+            collection_name=self.collection,
             points_selector=Filter(must=[FieldCondition(key="repo", match=MatchValue(value=repo))]),
         )

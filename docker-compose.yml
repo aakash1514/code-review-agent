@@ -1,0 +1,44 @@
+# Local run of the production image: the same container ECS will run, with
+# the same defaults (JSON logs, DATA_DIR=/data, Bedrock embeddings).
+#
+#   aws login --profile cra-admin                    # if the session expired
+#   aws configure export-credentials --profile cra-admin --format env-no-export > .env.aws
+#   docker compose up -d --build
+#   docker compose logs -f app
+#
+# Short-lived AWS keys come from .env.aws (git- and docker-ignored, expires
+# with your login session; re-run the export line and `docker compose up -d`
+# to refresh). The image itself never contains credentials; on AWS the ECS
+# task role provides them instead.
+
+services:
+  app:
+    build: .
+    image: code-review-agent:local
+    ports:
+      - "8000:8000"           # stop the local `uvicorn --port 8000` first; ngrok http 8000 then reaches this
+    env_file:
+      - path: .env            # GitHub App, Groq, Qdrant, OAuth settings
+        required: true
+      - path: .env.aws        # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
+        required: false
+    environment:
+      # Overrides for values in .env that only make sense on the laptop.
+      DATA_DIR: /data
+      DATABASE_URL: ""        # empty = sqlite under DATA_DIR
+      LOG_FORMAT: json
+      EMBEDDING_PROVIDER: bedrock
+      AWS_REGION: ap-south-1
+      GITHUB_PRIVATE_KEY_PATH: /run/secrets/github_app_key
+    secrets:
+      - github_app_key
+    volumes:
+      - cra-data:/data        # stands in for EFS; separate from the laptop's ./data
+    stop_grace_period: 120s   # same as the ECS stopTimeout planned for 8.3
+
+secrets:
+  github_app_key:
+    file: ./github-app-private-key.pem
+
+volumes:
+  cra-data:
