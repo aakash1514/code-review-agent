@@ -304,10 +304,28 @@ def _warnings_markdown(review: ReviewReport) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def _skipped_files_markdown(review: ReviewReport) -> str:
+    """Collapsed list of the files this review left out, with reasons."""
+    if not review.skipped_files:
+        return ""
+    lines = [
+        "",
+        "",
+        "<details>",
+        f"<summary>{len(review.skipped_files)} file(s) not reviewed</summary>",
+        "",
+    ]
+    lines += [f"- `{s['filename']}` — {s['reason']}" for s in review.skipped_files]
+    lines += ["", "</details>"]
+    return "\n".join(lines)
+
+
 def synthesize_markdown(review: ReviewReport, diff_snippet: str | None = None) -> str:
-    """Final PR comment body: any review warnings, then the findings write-up
-    from _synthesize_findings_markdown. Never raises."""
-    return _warnings_markdown(review) + _synthesize_findings_markdown(review, diff_snippet)
+    """Final PR comment body: any review warnings, the findings write-up from
+    _synthesize_findings_markdown, then the files that weren't reviewed.
+    Never raises."""
+    return (_warnings_markdown(review) + _synthesize_findings_markdown(review, diff_snippet)
+            + _skipped_files_markdown(review))
 
 
 def _synthesize_findings_markdown(review: ReviewReport, diff_snippet: str | None = None) -> str:

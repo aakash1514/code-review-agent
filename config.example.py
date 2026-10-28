@@ -39,6 +39,21 @@ class Settings:
     # Groq model ID for cheap / fast calls (test coverage, documentation).
     GROQ_MODEL_LIGHT: str = os.getenv("GROQ_MODEL_LIGHT", "openai/gpt-oss-20b")
 
+    # Review scope (pipeline/file_filter.py). Skipped files are listed, with
+    # the reason, in the PR comment and on the dashboard.
+    # Glob patterns never reviewed: "dir/" matches that directory anywhere in
+    # the path, anything else matches the file name or the full path.
+    REVIEW_SKIP_PATTERNS: list[str] = [
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "*.lock",  # lockfiles
+        "dist/", "build/", "node_modules/", "*.min.js", "*.map",                     # generated / vendored
+        "LICENSE", "LICENSE.*",
+    ]
+    # Patches longer than this are skipped (also keeps prompts under Groq's size limit).
+    MAX_PATCH_CHARS: int = int(os.getenv("MAX_PATCH_CHARS", "20000"))
+    # At most this many files are reviewed per PR: Python first, then other
+    # code, then config, then docs. The rest are listed as "not reviewed (limit)".
+    MAX_FILES_PER_REVIEW: int = int(os.getenv("MAX_FILES_PER_REVIEW", "25"))
+
     # Embeddings
     # "local" (default): run the embedding model in-process with
     # sentence-transformers on CPU; no API credits needed.

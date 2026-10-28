@@ -1,4 +1,7 @@
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import requests
 from config import settings
 
@@ -44,6 +47,28 @@ def _is_gpt_oss(model: str) -> bool:
 
 class ModelUnavailableError(Exception):
     pass
+
+
+class LLMCallCounter:
+    def __init__(self):
+        self.calls = 0
+
+
+_call_counter: ContextVar[LLMCallCounter | None] = ContextVar("llm_call_counter", default=None)
+
+
+@contextmanager
+def count_llm_calls():
+    """Counts every Groq HTTP request (retries and fallbacks included) made
+    in this context — including from agent threads started with
+    asyncio.to_thread, which inherit it. Concurrent reviews each get their
+    own count."""
+    counter = LLMCallCounter()
+    token = _call_counter.set(counter)
+    try:
+        yield counter
+    finally:
+        _call_counter.reset(token)
 
 
 class IncompleteResponseError(Exception):
@@ -106,6 +131,9 @@ class FreeModelClient:
 
         for attempt in range(max_retries + 1):
             started = time.monotonic()
+            counter = _call_counter.get()
+            if counter is not None:
+                counter.calls += 1
             resp = requests.post(
                 GROQ_CHAT_URL,
                 headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"},

@@ -74,6 +74,9 @@ class ReviewReport(BaseModel):
     # Non-fatal problems the review ran through, e.g. "vector context
     # unavailable: <reason>". Shown on the dashboard and in the PR comment.
     warnings: list[str] = Field(default_factory=list)
+    # Changed files the review left out, each {"filename": ..., "reason": ...}
+    # (see pipeline/file_filter.py). Listed in the PR comment and dashboard.
+    skipped_files: list[dict[str, str]] = Field(default_factory=list)
 
     # Status field for gap #1 — durable job tracking.
     # "pending" | "running" | "complete" | "failed"

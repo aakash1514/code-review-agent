@@ -38,6 +38,7 @@ React dashboard ── live progress over WebSocket, approve / block override
 ## Features
 
 - **Parallel specialist agents.** Security, Architecture, Test Coverage and Documentation agents run concurrently. A slow or failing agent times out without breaking the review.
+- **Review scope.** Lockfiles, generated and vendored paths, removed and binary files, `LICENSE` and patches over `MAX_PATCH_CHARS` are skipped before any LLM call. Docs (`.md`, `.txt`, `.rst`) get only the documentation agent. At most `MAX_FILES_PER_REVIEW` files are reviewed, Python first, then other code, config and docs. Every skipped file is listed with its reason in the PR comment and on the dashboard. All of this is configurable in `config.py`.
 - **Codebase-aware RAG.** Python files are split into function and class chunks with the `ast` module, embedded with `granite-embedding-97m` (384-dim, run locally with sentence-transformers by default), and stored in Qdrant with per-repo filtering. If embedding or Qdrant fails during a review, the review still runs on call-graph context and says "vector context unavailable" in the PR comment and the dashboard.
 - **Call-graph knowledge graph.** Calls, callers and imports for every function, scoped per class. It rebuilds automatically on every push to the default branch.
 - **Severity-ranked synthesis.** Findings are de-duplicated across agents and re-runs, then ranked from CRITICAL to INFO.

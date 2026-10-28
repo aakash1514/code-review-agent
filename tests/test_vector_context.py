@@ -95,7 +95,7 @@ def test_review_completes_with_a_warning_when_embedding_fails(monkeypatch, tmp_p
 
     agent_contexts = []
 
-    async def fake_agents(changed_file, diff_snippet, retrieved_context, on_agent_complete=None):
+    async def fake_agents(changed_file, diff_snippet, retrieved_context, on_agent_complete=None, agent_functions=None):
         agent_contexts.append(retrieved_context)
         return [AgentReport(agent_name="security", summary="ok")]
     monkeypatch.setattr(webhook, "run_agents_parallel", fake_agents)

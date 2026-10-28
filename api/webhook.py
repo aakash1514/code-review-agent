@@ -1,4 +1,4 @@
-import hashlib, hmac, json, traceback
+import hashlib, hmac, json, time, traceback
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +7,9 @@ from config import settings
 from models.findings import AgentReport
 from pipeline.job_store import init_db, sweep_stuck_jobs, try_start_job, update_status, save_result, is_stale_sha
 from pipeline.runner import run_agents_parallel
+from pipeline.file_filter import plan_review_files
+from agents.documentation_agent import run_documentation_agent
+from tools.model_client import count_llm_calls
 from pipeline.synthesizer import build_review_report, synthesize_markdown
 from pipeline.hitl_gate import evaluate_hitl_gate, DEFAULT_STATUS_CONTEXT
 from tools.github_tools import get_installation_token, get_pr_diff, get_pr_files, post_pr_review, set_commit_status
@@ -169,6 +172,16 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 
 
 async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:
+    started = time.monotonic()
+    with count_llm_calls() as llm_calls:
+        try:
+            await _run_review_pipeline(repo, pr_number, commit_sha)
+        finally:
+            print(f"[review] {repo}#{pr_number} @ {commit_sha[:7]}: finished in "
+                  f"{time.monotonic() - started:.1f}s with {llm_calls.calls} LLM call(s)")
+
+
+async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:
     update_status(repo, commit_sha, "running")
     await manager.broadcast(repo, {"commit_sha": commit_sha, "stage": "running", "pr_number": pr_number})
 
@@ -201,11 +214,18 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
                 "error": report.error,
             })
 
-        for f in files:
-            patch = f.get("patch")
-            if not patch:
-                continue
-            changed_file = f["filename"]
+        # Lockfiles, generated/vendored paths, removed/binary files and huge
+        # patches are skipped before any LLM call; docs get only the
+        # documentation agent; the rest is capped at MAX_FILES_PER_REVIEW.
+        plan = plan_review_files(files)
+        print(f"[webhook] {repo}#{pr_number}: reviewing {len(plan.to_review)} file(s), "
+              f"skipping {len(plan.skipped)}")
+        for s in plan.skipped:
+            print(f"    skipped {s.filename}: {s.reason}")
+
+        for target in plan.to_review:
+            patch = target.patch
+            changed_file = target.filename
             await manager.broadcast(repo, {"commit_sha": commit_sha, "stage": "file_started", "file": changed_file})
             changed_fn_names = [fn.name for fn in extract_functions(strip_diff_to_source(patch))]
             context = retriever.retrieve_for_diff(
@@ -223,6 +243,7 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
                 diff_snippet=patch,
                 retrieved_context=context_string,
                 on_agent_complete=_on_agent_complete,
+                agent_functions=[run_documentation_agent] if target.docs_only else None,
             )
             all_agent_reports.extend(reports)
 
@@ -230,6 +251,7 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
             pr_number=pr_number, repo=repo, commit_sha=commit_sha, agent_reports=all_agent_reports,
         )
         review.warnings = [f"vector context unavailable: {reason}" for reason in vector_errors]
+        review.skipped_files = [{"filename": s.filename, "reason": s.reason} for s in plan.skipped]
 
         # Fix 5.1: generate markdown FIRST, attach it to the review object,
         # THEN persist — previously save_result ran before synthesize_markdown

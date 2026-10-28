@@ -5,8 +5,8 @@ Deferred fixes and open questions, each with when it should be fixed.
 1. **Call-graph key collision within one file.** `rag/knowledge_graph.py` keys nodes as `file::function`, not `file::Class.function`, so two classes in the same file with a same-named method share one node and the second overwrites the first. Calls between classes in different files are scoped correctly. Pinned by `tests/test_knowledge_graph.py::test_same_named_methods_in_one_file_get_separate_nodes`.
    **Fix when:** next change to the knowledge graph. It needs a key format change, a matching update to the retriever's `find_fn_key_by_name_and_file` lookup, and a reindex of every repo.
 
-2. **Groq 413 on large prompts.** The retrieved RAG context is capped at 8000 characters (`SmartRetriever.build_agent_context_string`), but the diff passed to each agent isn't capped at all. A large single-file diff can exceed Groq's request size and fail that agent with HTTP 413.
-   **Fix when:** before reviewing repos with large generated or vendored files, or as soon as a 413 shows up in the logs. Cap or chunk the diff per agent call and say in the review when a file was truncated.
+2. **Large patches are skipped, not reviewed.** The retrieved RAG context is capped at 8000 characters (`SmartRetriever.build_agent_context_string`). Patches over `MAX_PATCH_CHARS` (default 20000) are now skipped and listed as "patch too large", which keeps prompts under Groq's request size limit and avoids HTTP 413, but leaves those changes unreviewed.
+   **Fix when:** large hand-written changes start getting skipped in practice. Chunk a large patch by hunk or function and review the chunks, instead of skipping the file.
 
 3. **PR review behaviour on non-default branches.** Pushes to the default branch trigger a reindex. PRs targeting other branches are still reviewed against the default branch's index. The intended behaviour isn't decided yet.
    **Fix when:** the spec is written. Don't change this until then.

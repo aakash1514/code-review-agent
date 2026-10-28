@@ -340,6 +340,30 @@ export default function ReviewDetail({ repo, job, onActionComplete, liveEvents =
                 <AgentStrip agentReports={review.agent_reports} />
               </div>
 
+              {review.skipped_files?.length > 0 && (
+                <details
+                  style={{
+                    marginBottom: 16,
+                    padding: "8px 14px",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius)",
+                    fontSize: 13,
+                    color: "var(--fg-muted)",
+                  }}
+                >
+                  <summary style={{ cursor: "pointer" }}>
+                    {review.skipped_files.length} file(s) not reviewed
+                  </summary>
+                  <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+                    {review.skipped_files.map((s) => (
+                      <li key={s.filename}>
+                        <code>{s.filename}</code> — {s.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+
               <div style={{ marginBottom: 20 }}>
                 <VerdictBanner review={review} />
               </div>
