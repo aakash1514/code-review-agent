@@ -122,7 +122,7 @@ def test_counter_sums_tokens_from_every_successful_response(groq):
 
 def test_counter_skips_rate_limited_responses_and_missing_usage(groq, monkeypatch):
     monkeypatch.setattr(mc.time, "sleep", lambda s: None)
-    limited = MagicMock(status_code=429, headers={"retry-after": "0"})
+    limited = MagicMock(status_code=429, headers={"retry-after": "0"}, text="")
     no_usage = _response(content="[]")
     no_usage.json.return_value.pop("usage")
     groq.side_effect = [limited, no_usage]
@@ -132,3 +132,25 @@ def test_counter_skips_rate_limited_responses_and_missing_usage(groq, monkeypatc
 
     assert counter.calls == 2
     assert (counter.prompt_tokens, counter.completion_tokens, counter.reasoning_tokens) == (0, 0, 0)
+
+
+def test_429_logs_rate_limit_headers_and_body_without_secrets(groq, monkeypatch, capsys):
+    monkeypatch.setattr(mc.time, "sleep", lambda s: None)
+    body = ('{"error": {"message": "Rate limit reached for model `openai/gpt-oss-120b` in organization '
+            '`org_01abcXYZ` on tokens per day (TPD): Limit 200000, Used 199500, Requested 6000."}}')
+    limited = MagicMock(status_code=429, text=body, headers={
+        "retry-after": "431", "x-ratelimit-limit-tokens": "8000",
+        "x-ratelimit-remaining-tokens": "7500", "content-type": "application/json"})
+    groq.side_effect = [limited, _response()]
+
+    model_client.reason(system="s", user="u", task="security")
+
+    out = capsys.readouterr().out
+    assert "[groq] 429 from openai/gpt-oss-120b" in out
+    assert "'retry-after': '431'" in out
+    assert "'x-ratelimit-remaining-tokens': '7500'" in out
+    assert "tokens per day (TPD)" in out
+    assert "content-type" not in out
+    assert "org_01abcXYZ" not in out and "org_***" in out
+    assert "test-groq-key" not in out
+    assert "rate-limited on openai/gpt-oss-120b, waiting 431s" in out

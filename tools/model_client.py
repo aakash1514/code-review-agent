@@ -1,3 +1,4 @@
+import re
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -43,6 +44,16 @@ def _is_gpt_oss(model: str) -> bool:
     # Only gpt-oss accepts reasoning_effort low/medium/high and include_reasoning;
     # other Groq models reject them, so they're sent to gpt-oss only.
     return "gpt-oss" in model
+
+
+def _rate_limit_details(resp) -> str:
+    """The x-ratelimit-* / retry-after headers and the (truncated) body of a
+    429, so a daily-quota stop is distinguishable from a per-minute wait.
+    Neither carries the API key; organization ids in the body are masked."""
+    headers = {k.lower(): v for k, v in resp.headers.items()
+               if k.lower().startswith("x-ratelimit-") or k.lower() == "retry-after"}
+    body = re.sub(r"org_\w+", "org_***", resp.text[:500])
+    return f"headers={headers} body={body!r}"
 
 
 class ModelUnavailableError(Exception):
@@ -145,6 +156,8 @@ class FreeModelClient:
                 json=body,
                 timeout=90,
             )
+            if resp.status_code == 429:
+                print(f"    [groq] 429 from {model}: {_rate_limit_details(resp)}")
             if resp.status_code == 429 and attempt < max_retries:
                 wait = int(resp.headers.get("retry-after", 5 * (attempt + 1)))
                 print(f"    [groq] rate-limited on {model}, waiting {wait}s")
