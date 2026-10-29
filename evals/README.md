@@ -57,9 +57,7 @@ every case (categories, line ranges inside the file and inside the patch,
 `expect_block` consistent with the CRITICAL issues, not skipped by the file
 filter). `smoke.txt` lists the 8-case subset.
 
-The test-coverage agent can't see test files, so it flags most new logic. Cases
-outside the test-coverage group list their new code as an `acceptable`
-TEST_COVERAGE range; the clean and test-coverage cases put tests in `context/`.
+The clean and test-coverage cases put tests in `context/`.
 
 ## Scoring
 
@@ -70,3 +68,16 @@ are duplicates, and findings on an `acceptable` range don't count. Precision
 counts findings of MEDIUM or above. Recall counts an issue as found at any
 severity. With `--repeat N`, the report gives the mean with the (min–max) range.
 It also lists every unmatched finding of MEDIUM or above for hand triage.
+
+## Limitations
+
+- The test-coverage agent sees no test files, so it flags most new logic. In the
+  security, architecture and documentation cases the new code is marked as an
+  `acceptable` TEST_COVERAGE range, so those findings aren't counted as false
+  positives. The report always shows the acceptable count, so this exclusion is
+  visible.
+- Modified files whose hunks start mid-function get no KG context, even with
+  `--context kg` (`docs/KNOWN_ISSUES.md` #8; affects `sec-02`, `sec-08`,
+  `arch-03`, `arch-05`).
+- The architecture agent drops any finding that mentions "sql" or "database
+  query", and `--no-severity-cap` doesn't turn that off (`docs/KNOWN_ISSUES.md` #9).

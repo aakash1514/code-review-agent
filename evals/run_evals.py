@@ -282,6 +282,8 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]]) -> 
         out.append("- Values are the mean over repeats, with (min–max) when they differ.")
     out.append("- Precision counts findings >= MEDIUM; recall counts an issue found at any severity; "
                f"line match tolerance ±{scoring.LINE_TOLERANCE}.")
+    out.append(f"- **Acceptable findings >= MEDIUM (excluded from FP): {_cell(agg, 'ALL.acceptable', 'int')}** "
+               "(mostly TEST_COVERAGE on new code; the agent sees no test files).")
 
     out += ["", "## Per category", ""]
     rows = []
