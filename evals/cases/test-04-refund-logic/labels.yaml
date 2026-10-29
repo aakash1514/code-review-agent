@@ -1,0 +1,10 @@
+id: test-04-refund-logic
+description: "new refund amount rules (window, restocking fee, prior refunds)"
+file_path: app/refunds.py
+expect_block: false
+issues:
+  - id: refund
+    category: TEST_COVERAGE
+    lines: [16, 25]
+    severity: HIGH
+    note: "money-moving logic: window boundary, fee rounding, over-refund cap"

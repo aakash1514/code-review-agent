@@ -1,0 +1,15 @@
+id: doc-05-api-doc-contradiction
+description: "API doc example disagrees with its own field table and status code (docs-only)"
+file_path: docs/api.md
+expect_block: false
+issues:
+  - id: field-name
+    category: DOCUMENTATION
+    lines: [23, 23]
+    severity: MEDIUM
+    note: "example sends user_name; table requires username"
+  - id: status
+    category: DOCUMENTATION
+    lines: [27, 27]
+    severity: LOW
+    note: "example shows 200 OK; text says 201 Created"

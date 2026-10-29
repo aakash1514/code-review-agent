@@ -1,0 +1,10 @@
+id: test-01-new-public-function
+description: "new tiered late_fee() with min/max clamps, no tests for it"
+file_path: app/billing.py
+expect_block: false
+issues:
+  - id: late-fee
+    category: TEST_COVERAGE
+    lines: [9, 21]
+    severity: MEDIUM
+    note: "tier boundaries 0/30/60 days, $5 floor, $50 cap untested"

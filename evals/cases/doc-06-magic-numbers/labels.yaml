@@ -1,0 +1,14 @@
+id: doc-06-magic-numbers
+description: "backoff policy full of unexplained constants"
+file_path: app/retry.py
+expect_block: false
+issues:
+  - id: magic
+    category: DOCUMENTATION
+    lines: [7, 14]
+    severity: LOW
+    note: "7 attempts, 0.25 base, 32 cap, 1.5x for 429, 4 s floor, +-20% jitter: no why"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [5, 19]
+    note: "new logic; the agent can't see tests"

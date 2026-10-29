@@ -1,0 +1,14 @@
+id: arch-01-god-function
+description: "process_order validates, prices, reserves, saves, emails and audits in one 48-line function"
+file_path: app/orders.py
+expect_block: false
+issues:
+  - id: god-fn
+    category: ARCHITECTURE
+    lines: [8, 56]
+    severity: MEDIUM
+    note: "too many responsibilities, nested backorder logic, inline magic numbers"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [8, 56]
+    note: "new logic; the agent can't see tests"

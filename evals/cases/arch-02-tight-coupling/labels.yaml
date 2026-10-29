@@ -1,0 +1,14 @@
+id: arch-02-tight-coupling
+description: "service constructs concrete Postgres repo and SMTP mailer in __init__"
+file_path: app/report_service.py
+expect_block: false
+issues:
+  - id: coupling
+    category: ARCHITECTURE
+    lines: [11, 13]
+    severity: MEDIUM
+    note: "no dependency injection; can't swap or fake repo/mailer"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [15, 33]
+    note: "new logic; the agent can't see tests"

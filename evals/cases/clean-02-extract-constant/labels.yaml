@@ -1,0 +1,5 @@
+id: clean-02-extract-constant
+description: "magic numbers replaced by named constants, behaviour unchanged"
+file_path: app/pagination.py
+expect_block: false
+issues: []

@@ -1,0 +1,5 @@
+id: clean-01-slugify
+description: "small documented slugify helper, tests in context"
+file_path: app/text_utils.py
+expect_block: false
+issues: []

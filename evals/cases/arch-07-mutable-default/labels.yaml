@@ -1,0 +1,14 @@
+id: arch-07-mutable-default
+description: "extract_tags uses a mutable default list that it appends to"
+file_path: app/tags.py
+expect_block: false
+issues:
+  - id: mutable-default
+    category: ARCHITECTURE
+    lines: [7, 13]
+    severity: MEDIUM
+    note: "tags leak between unrelated posts via the shared default"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [7, 20]
+    note: "new logic; the agent can't see tests"

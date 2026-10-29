@@ -1,0 +1,5 @@
+id: clean-05-docs-tidy
+description: "typo fixes and a commit-message section (docs-only)"
+file_path: CONTRIBUTING.md
+expect_block: false
+issues: []

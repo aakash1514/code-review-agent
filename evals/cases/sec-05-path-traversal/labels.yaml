@@ -1,0 +1,14 @@
+id: sec-05-path-traversal
+description: "<path:filename> joined onto the report dir without containment check"
+file_path: app/reports.py
+expect_block: false
+issues:
+  - id: traversal
+    category: SECURITY
+    lines: [16, 19]
+    severity: HIGH
+    note: "../ escapes REPORT_DIR/<user id>: arbitrary file read for logged-in users"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [14, 19]
+    note: "new logic; the agent can't see tests"
