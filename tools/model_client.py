@@ -52,6 +52,11 @@ class ModelUnavailableError(Exception):
 class LLMCallCounter:
     def __init__(self):
         self.calls = 0
+        # Summed from the usage block of every successful (2xx) response,
+        # including ones then rejected as incomplete: those tokens were spent.
+        self.prompt_tokens = 0
+        self.completion_tokens = 0  # includes reasoning_tokens
+        self.reasoning_tokens = 0
 
 
 _call_counter: ContextVar[LLMCallCounter | None] = ContextVar("llm_call_counter", default=None)
@@ -59,8 +64,8 @@ _call_counter: ContextVar[LLMCallCounter | None] = ContextVar("llm_call_counter"
 
 @contextmanager
 def count_llm_calls():
-    """Counts every Groq HTTP request (retries and fallbacks included) made
-    in this context — including from agent threads started with
+    """Counts every Groq HTTP request (retries and fallbacks included), and
+    the tokens of every successful response, made in this context — including from agent threads started with
     asyncio.to_thread, which inherit it. Concurrent reviews each get their
     own count."""
     counter = LLMCallCounter()
@@ -152,6 +157,10 @@ class FreeModelClient:
             usage = data.get("usage") or {}
             reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
+            if counter is not None:
+                counter.prompt_tokens += usage.get("prompt_tokens", 0)
+                counter.completion_tokens += completion_tokens
+                counter.reasoning_tokens += reasoning_tokens
             print(f"    [groq] task={task} model={model} effort={effort or '-'} finish={finish_reason} "
                   f"tokens: prompt={usage.get('prompt_tokens', '?')} reasoning={reasoning_tokens} "
                   f"answer={completion_tokens - reasoning_tokens} ({time.monotonic() - started:.1f}s)")

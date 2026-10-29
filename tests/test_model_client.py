@@ -104,3 +104,31 @@ def test_synthesis_uses_model_client_and_falls_back_to_template(monkeypatch, mak
     reason.side_effect = ModelUnavailableError("all tiers failed")
     fallback = synthesize_markdown(review)
     assert "critical issue(s) found" in fallback and "Hardcoded key" in fallback
+
+
+def test_counter_sums_tokens_from_every_successful_response(groq):
+    # One truncated answer (its tokens were still spent) then the fallback's answer.
+    groq.side_effect = [_response(content="", finish_reason="length", reasoning_tokens=30),
+                        _response(content="[]", reasoning_tokens=40)]
+
+    with mc.count_llm_calls() as counter:
+        model_client.reason(system="s", user="u", task="security")
+
+    assert counter.calls == 2
+    assert counter.prompt_tokens == 200
+    assert counter.completion_tokens == (30 + 10) + (40 + 10)
+    assert counter.reasoning_tokens == 70
+
+
+def test_counter_skips_rate_limited_responses_and_missing_usage(groq, monkeypatch):
+    monkeypatch.setattr(mc.time, "sleep", lambda s: None)
+    limited = MagicMock(status_code=429, headers={"retry-after": "0"})
+    no_usage = _response(content="[]")
+    no_usage.json.return_value.pop("usage")
+    groq.side_effect = [limited, no_usage]
+
+    with mc.count_llm_calls() as counter:
+        model_client.reason(system="s", user="u", task="security")
+
+    assert counter.calls == 2
+    assert (counter.prompt_tokens, counter.completion_tokens, counter.reasoning_tokens) == (0, 0, 0)
