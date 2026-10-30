@@ -120,6 +120,68 @@ def detect_sql_patterns(code: str) -> list[dict]:
     return findings
 
 
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def new_file_lines(patch: str) -> list[tuple[int, str]]:
+    """(line number in the new file, text) for every added and context line
+    of a GitHub-style patch, in order. Removed lines have no new-file number."""
+    lines, n = [], None
+    for line in patch.splitlines():
+        header = _HUNK_HEADER.match(line)
+        if header:
+            n = int(header.group(1))
+            continue
+        if n is None or line.startswith(("\\", "+++ ", "--- ")):
+            continue
+        if line.startswith("-"):
+            continue
+        lines.append((n, line[1:] if line[:1] in ("+", " ") else line))
+        n += 1
+    return lines
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.split())
+
+
+def reanchor_finding_lines(findings: list, patch: str) -> list:
+    """
+    Agents see the patch without line numbers and guess line_start/line_end,
+    which often don't point at the code they quote (KNOWN_ISSUES #10). This
+    moves each finding to where its snippet sits among the patch's added and
+    context lines, comparing with whitespace normalized: a multi-line snippet
+    must match consecutive new-file lines; a one-line snippet may also be part
+    of a line. With several matches, the one nearest the reported line_start
+    wins. Findings with an empty snippet, or one that isn't found (it quotes
+    removed lines, or is truncated), keep the model's lines. Returns copies.
+    """
+    numbered = [(n, _normalize(text)) for n, text in new_file_lines(patch)]
+    out = []
+    for f in findings:
+        want = [_normalize(s) for s in f.location.snippet.splitlines() if s.strip()]
+        spans = []
+        if want:
+            for i in range(len(numbered) - len(want) + 1):
+                window = numbered[i:i + len(want)]
+                if window[-1][0] - window[0][0] != len(want) - 1:
+                    continue  # crosses a hunk boundary
+                if len(want) == 1:
+                    hit = want[0] in window[0][1]
+                else:
+                    hit = all(w == line for w, (_, line) in zip(want, window))
+                if hit:
+                    spans.append((window[0][0], window[-1][0]))
+        if spans:
+            start, end = min(spans, key=lambda s: abs(s[0] - f.location.line_start))
+            f = f.model_copy(update={"location": f.location.model_copy(
+                update={"line_start": start, "line_end": end})})
+        else:
+            f = f.model_copy()
+        out.append(f)
+    return out
+
+
 def calculate_complexity(source: str) -> dict[str, int]:
     """
     Approximate cyclomatic complexity per function.
