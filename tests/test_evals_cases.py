@@ -6,7 +6,7 @@ import pytest
 
 from evals.golden import (all_case_ids, build_patch, load_case, load_cases, smoke_case_ids, validate_case,
                           visible_new_lines, CASES_DIR)
-from evals.run_evals import build_context, disable_severity_cap
+from evals.run_evals import build_context, disable_floor, disable_severity_cap
 from pipeline.file_filter import plan_review_files
 from tools.code_tools import strip_diff_to_source
 
@@ -63,3 +63,13 @@ def test_disable_severity_cap(monkeypatch, make_finding):
     assert arch._cap_routine_edge_case_severity([finding])[0].severity.value == "MEDIUM"
     disable_severity_cap()
     assert arch._cap_routine_edge_case_severity([finding])[0].severity.value == "CRITICAL"
+
+
+def test_disable_floor(monkeypatch, make_finding):
+    import agents.security_agent as sec
+    monkeypatch.setattr(sec, "_floor_canonical_vulnerabilities", sec._floor_canonical_vulnerabilities)
+    finding = make_finding(title="Command injection", severity="HIGH", category="SECURITY",
+                           snippet="subprocess.run(cmd, shell=True)")
+    assert sec._floor_canonical_vulnerabilities([finding], "")[0].severity.value == "CRITICAL"
+    disable_floor()
+    assert sec._floor_canonical_vulnerabilities([finding], "")[0].severity.value == "HIGH"

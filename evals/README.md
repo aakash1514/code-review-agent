@@ -14,7 +14,11 @@ python -m evals.run_evals score evals/runs/smoke-1 --md
 `run` options: `--cases smoke|all|id1,id2` (default `smoke`), `--context kg|none`
 (default `kg`: knowledge graph built from the case's files, no vector index),
 `--no-severity-cap` (baseline: the architecture agent's CRITICAL cap turned off
-in the harness process only), `--repeat N`, `--pause S` between cases. Re-running
+in the harness process only), `--no-floor` (ablation: the security agent's
+CRITICAL floor turned off, same way), `--repeat N`, `--pause S` between cases.
+Each run record also keeps the floor's raises (`floor_raises`) and the number
+of findings the pipeline re-anchored (`reanchored`); the report header totals
+them. Re-running
 with the same `--out` and flags resumes an interrupted run.
 
 Each case is reviewed like one PR file in `api/webhook._run_review_pipeline`:
