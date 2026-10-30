@@ -3,7 +3,7 @@ import re
 import time
 from models.findings import AgentReport, Finding, Severity, FindingCategory, CodeLocation
 from tools.model_client import model_client, ModelUnavailableError
-from tools.code_tools import detect_sql_patterns
+from tools.code_tools import detect_sql_patterns, find_snippet_spans, new_file_lines
 
 AGENT_NAME = "security"
 
@@ -208,8 +208,31 @@ def _unsafe_deserialization_evidence(code: str) -> bool:
                for line in code.splitlines())
 
 
-def _missing_auth_evidence(code: str) -> bool:
+def _state_changing_route(code: str) -> bool:
     return any(_STATE_CHANGING_ROUTE.search(line) for line in code.splitlines())
+
+
+# Missing auth needs evidence LOCAL to the finding, not anywhere in the diff:
+# any file with one POST route would otherwise let a finding about a
+# different function (or another vuln described as "unauthenticated") block
+# the merge. So: the snippet itself has a state-changing route decorator, or
+# the snippet sits in the added lines with one among the 5 added lines at or
+# above its first line. Snippet empty or not found: no raise.
+_AUTH_ROUTE_WINDOW = 5
+
+
+def _missing_auth_local_evidence(finding: Finding, diff_snippet: str) -> bool:
+    snippet = finding.location.snippet
+    if _state_changing_route(snippet):
+        return True
+    added = new_file_lines(diff_snippet, added_only=True)
+    spans = find_snippet_spans(snippet, added)
+    if not spans:
+        return False
+    first = min(spans, key=lambda s: abs(s[0] - finding.location.line_start))[0]
+    i = next(k for k, (n, _) in enumerate(added) if n == first)
+    window = added[max(0, i - _AUTH_ROUTE_WINDOW + 1):i + 1]
+    return _state_changing_route("\n".join(text for _, text in window))
 
 
 def _secret_wording(text: str) -> bool:
@@ -217,33 +240,37 @@ def _secret_wording(text: str) -> bool:
             and any(w in text for w in ("secret", "api key", "token", "password", "credential")))
 
 
-# (class name, wording check on lowercase title+description, code evidence check)
-_CANONICAL_CLASSES = (
-    ("sql injection", lambda t: "sql injection" in t, _sql_injection_evidence),
-    ("command injection", lambda t: any(k in t for k in ("command injection", "shell injection", "os command")),
-     lambda code: any(_COMMAND_INJECTION.search(l) for l in code.splitlines())),
-    ("hard-coded secret", _secret_wording, _hardcoded_secret_evidence),
-    ("unsafe deserialization", lambda t: any(k in t for k in ("deserializ", "pickle", "yaml.load", "marshal")),
-     _unsafe_deserialization_evidence),
-    ("missing auth", lambda t: any(k in t for k in ("missing auth", "no auth", "unauthenticated", "authorization check",
-                                                   "authentication check", "access control")),
-     _missing_auth_evidence),
-)
-
-
 def _added_lines(diff_snippet: str) -> str:
     return "\n".join(l[1:] for l in diff_snippet.splitlines() if l.startswith("+") and not l.startswith("+++"))
 
 
+def _in_snippet_or_added_lines(code_check):
+    """Evidence anywhere in the finding's snippet or the diff's added lines."""
+    return lambda finding, diff_snippet: code_check(finding.location.snippet) or code_check(_added_lines(diff_snippet))
+
+
+# (class name, wording check on lowercase title+description, evidence check on (finding, diff))
+_CANONICAL_CLASSES = (
+    ("sql injection", lambda t: "sql injection" in t, _in_snippet_or_added_lines(_sql_injection_evidence)),
+    ("command injection", lambda t: any(k in t for k in ("command injection", "shell injection", "os command")),
+     _in_snippet_or_added_lines(lambda code: any(_COMMAND_INJECTION.search(l) for l in code.splitlines()))),
+    ("hard-coded secret", _secret_wording, _in_snippet_or_added_lines(_hardcoded_secret_evidence)),
+    ("unsafe deserialization", lambda t: any(k in t for k in ("deserializ", "pickle", "yaml.load", "marshal")),
+     _in_snippet_or_added_lines(_unsafe_deserialization_evidence)),
+    ("missing auth", lambda t: any(k in t for k in ("missing auth", "no auth", "without auth", "lacks auth",
+                                                   "authorization check", "authentication check", "access control")),
+     _missing_auth_local_evidence),
+)
+
+
 def _floor_canonical_vulnerabilities(findings: list[Finding], diff_snippet: str) -> list[Finding]:
-    added = _added_lines(diff_snippet)
     floored = []
     for f in findings:
         if f.severity in (Severity.HIGH, Severity.MEDIUM):
             text = f"{f.title} {f.description}".lower()
             if not any(kw in text for kw in _FLOOR_NEVER_RAISE_KEYWORDS):
                 for name, wording, evidence in _CANONICAL_CLASSES:
-                    if wording(text) and (evidence(f.location.snippet) or evidence(added)):
+                    if wording(text) and evidence(f, diff_snippet):
                         print(f"    [security_agent] raised {f.severity.value}->CRITICAL ({name}): {f.title!r}")
                         f = f.model_copy(update={"severity": Severity.CRITICAL})
                         break

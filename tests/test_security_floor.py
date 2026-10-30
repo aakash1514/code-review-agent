@@ -37,9 +37,10 @@ SQLI_FSTRING = ['    rows = conn.execute(',
     ("Hard-coded secret token", "", _added('GITHUB_TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz"')),
     ("Insecure deserialization of cookie", "return pickle.loads(base64.urlsafe_b64decode(raw))", ""),
     ("Unsafe yaml.load on upload", "cfg = yaml.load(body)", ""),
-    ("Missing authorization check on delete route", "",
+    ("Missing authorization check on delete route", "def delete_user(user_id):",
      _added('@bp.route("/users/<int:user_id>", methods=["DELETE"])', "def delete_user(user_id):")),
-    ("Unauthenticated endpoint", '@app.post("/tenants")', ""),
+    ("Endpoint without auth", '@app.post("/tenants")', ""),
+    ("Route lacks authentication", '@bp.route("/items/<int:i>", methods=["PUT", "PATCH"])\ndef edit(i):', ""),
 ])
 def test_canonical_class_with_code_evidence_is_raised(make_finding, capsys, title, snippet, diff):
     assert _floored(_sec(make_finding, title, snippet), diff) == "CRITICAL"
@@ -77,6 +78,61 @@ def test_wording_without_code_evidence_anywhere_is_not_raised(make_finding):
     for title in ("SQL injection", "Command injection", "Hardcoded API key", "Insecure deserialization",
                   "Missing authorization check"):
         assert _floored(_sec(make_finding, title, "return sum(items)"), diff) == "HIGH"
+
+
+# --- missing auth: evidence must be local to the finding ----------------------------
+
+# sec-08's shape: an added DELETE route whose body the finding quotes.
+SEC_08_PATCH = """\
+@@ -24,3 +24,13 @@
+     user.active = False
+     db.session.commit()
+     return jsonify(user.to_dict())
++
++
++@bp.route("/users/<int:user_id>", methods=["DELETE"])
++@login_required
++def delete_user(user_id: int):
++    \"\"\"Permanently delete a user and all of their data.\"\"\"
++    user = User.query.get_or_404(user_id)
++    db.session.delete(user)
++    db.session.commit()
++    return "", 204"""
+
+MISSING_AUTH = "Missing authorization check on user deletion"
+
+
+def test_missing_auth_raised_when_the_route_decorator_is_a_few_lines_above_the_snippet(make_finding):
+    finding = _sec(make_finding, MISSING_AUTH, "user = User.query.get_or_404(user_id)")
+    assert _floored(finding, SEC_08_PATCH) == "CRITICAL"
+
+
+def test_missing_auth_not_raised_when_the_decorator_is_more_than_5_added_lines_above(make_finding):
+    # db.session.delete(user) is the 6th added line counting up from the decorator
+    assert _floored(_sec(make_finding, MISSING_AUTH, "db.session.delete(user)"), SEC_08_PATCH) == "HIGH"
+
+
+def test_missing_auth_not_raised_for_a_snippet_in_another_function(make_finding):
+    diff = _added('@bp.route("/items", methods=["POST"])', "def create_item():", "    return save(request.json)",
+                  "", "", "def purge():", "    a = load()", "    b = filter(a)", "    delete_all(b)")
+    assert _floored(_sec(make_finding, "Missing authentication check on purge", "delete_all(b)"), diff) == "HIGH"
+
+
+def test_missing_auth_not_raised_without_a_local_snippet(make_finding):
+    diff = _added('@bp.route("/items", methods=["POST"])', "def create_item():")
+    assert _floored(_sec(make_finding, MISSING_AUTH, ""), diff) == "HIGH"                # empty snippet
+    assert _floored(_sec(make_finding, MISSING_AUTH, "not in the diff"), diff) == "HIGH"  # not found
+    # a snippet only in context lines isn't in the added lines
+    assert _floored(_sec(make_finding, MISSING_AUTH, "return jsonify(user.to_dict())"), SEC_08_PATCH) == "HIGH"
+
+
+def test_unauthenticated_attacker_wording_is_not_missing_auth(make_finding):
+    # SSRF-style finding that never says "SSRF", in a diff with a POST route
+    diff = _added('@bp.route("/previews", methods=["POST"])', "def create_preview():",
+                  '    url = request.json["url"]', "    resp = requests.get(url, timeout=5)")
+    finding = _sec(make_finding, "Server fetches arbitrary user-supplied URLs", "resp = requests.get(url, timeout=5)",
+                   description="An unauthenticated attacker can fetch internal URLs through the preview endpoint.")
+    assert _floored(finding, diff) == "HIGH"
 
 
 def test_code_evidence_without_the_class_wording_is_not_raised(make_finding):

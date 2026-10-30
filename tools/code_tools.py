@@ -123,9 +123,10 @@ def detect_sql_patterns(code: str) -> list[dict]:
 _HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
-def new_file_lines(patch: str) -> list[tuple[int, str]]:
+def new_file_lines(patch: str, added_only: bool = False) -> list[tuple[int, str]]:
     """(line number in the new file, text) for every added and context line
-    of a GitHub-style patch, in order. Removed lines have no new-file number."""
+    of a GitHub-style patch, in order (only the added ones with added_only).
+    Removed lines have no new-file number."""
     lines, n = [], None
     for line in patch.splitlines():
         header = _HUNK_HEADER.match(line)
@@ -136,13 +137,37 @@ def new_file_lines(patch: str) -> list[tuple[int, str]]:
             continue
         if line.startswith("-"):
             continue
-        lines.append((n, line[1:] if line[:1] in ("+", " ") else line))
+        if line.startswith("+") or not added_only:
+            lines.append((n, line[1:] if line[:1] in ("+", " ") else line))
         n += 1
     return lines
 
 
 def _normalize(text: str) -> str:
     return " ".join(text.split())
+
+
+def find_snippet_spans(snippet: str, numbered: list[tuple[int, str]]) -> list[tuple[int, int]]:
+    """(first, last) new-file lines of every place snippet occurs in numbered
+    (from new_file_lines), comparing with whitespace normalized: a multi-line
+    snippet must match consecutive lines; a one-line snippet may also be part
+    of a line. Empty snippet: no spans."""
+    want = [_normalize(s) for s in snippet.splitlines() if s.strip()]
+    lines = [(n, _normalize(text)) for n, text in numbered]
+    spans = []
+    if not want:
+        return spans
+    for i in range(len(lines) - len(want) + 1):
+        window = lines[i:i + len(want)]
+        if window[-1][0] - window[0][0] != len(want) - 1:
+            continue  # crosses a hunk boundary (or a removed/context gap)
+        if len(want) == 1:
+            hit = want[0] in window[0][1]
+        else:
+            hit = all(w == line for w, (_, line) in zip(want, window))
+        if hit:
+            spans.append((window[0][0], window[-1][0]))
+    return spans
 
 
 def reanchor_finding_lines(findings: list, patch: str) -> list:
@@ -156,22 +181,10 @@ def reanchor_finding_lines(findings: list, patch: str) -> list:
     wins. Findings with an empty snippet, or one that isn't found (it quotes
     removed lines, or is truncated), keep the model's lines. Returns copies.
     """
-    numbered = [(n, _normalize(text)) for n, text in new_file_lines(patch)]
+    numbered = new_file_lines(patch)
     out = []
     for f in findings:
-        want = [_normalize(s) for s in f.location.snippet.splitlines() if s.strip()]
-        spans = []
-        if want:
-            for i in range(len(numbered) - len(want) + 1):
-                window = numbered[i:i + len(want)]
-                if window[-1][0] - window[0][0] != len(want) - 1:
-                    continue  # crosses a hunk boundary
-                if len(want) == 1:
-                    hit = want[0] in window[0][1]
-                else:
-                    hit = all(w == line for w, (_, line) in zip(want, window))
-                if hit:
-                    spans.append((window[0][0], window[-1][0]))
+        spans = find_snippet_spans(f.location.snippet, numbered)
         if spans:
             start, end = min(spans, key=lambda s: abs(s[0] - f.location.line_start))
             f = f.model_copy(update={"location": f.location.model_copy(
