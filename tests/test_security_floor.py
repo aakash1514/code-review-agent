@@ -1,0 +1,111 @@
+"""The security agent's deterministic CRITICAL floor for canonical vulnerabilities."""
+import pytest
+
+from agents.security_agent import _floor_canonical_vulnerabilities
+
+
+def _added(*lines):
+    """A new-file patch whose added lines are `lines`."""
+    return f"@@ -0,0 +1,{len(lines)} @@\n" + "\n".join("+" + l for l in lines)
+
+
+def _sec(make_finding, title, snippet="", severity="HIGH", description=None):
+    return make_finding(title=title, description=description, severity=severity, category="SECURITY",
+                        snippet=snippet)
+
+
+def _floored(finding, diff=""):
+    [f] = _floor_canonical_vulnerabilities([finding], diff)
+    return f.severity.value
+
+
+SQLI_FSTRING = ['    rows = conn.execute(',
+                '        f"SELECT id FROM members WHERE name LIKE \'{name}%\'"',
+                '    ).fetchall()']
+
+
+# --- positives: wording + code evidence --------------------------------------------
+
+@pytest.mark.parametrize("title, snippet, diff", [
+    ("SQL injection via f-string query", "", _added(*SQLI_FSTRING)),
+    ("SQL injection in search", 'query = "SELECT * FROM t WHERE id = %s" % user_id\ncur.execute(query)', ""),
+    ("SQL injection through .format", 'db.execute("DELETE FROM t WHERE id = {}".format(i))', ""),
+    ("OS command injection in backup", "subprocess.run(cmd, shell=True, check=True)", ""),
+    ("Shell injection", "", _added('    os.system("tar czf /backups/" + folder)')),
+    ("Command injection", 'subprocess.check_output(f"ping {host}")', ""),
+    ("Hardcoded API key", 'PAYLANE_API_KEY = "plk_live_4f9c2a7e81d34b6c9a0e5f17d2b8c3a6"', ""),
+    ("Hard-coded secret token", "", _added('GITHUB_TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz"')),
+    ("Insecure deserialization of cookie", "return pickle.loads(base64.urlsafe_b64decode(raw))", ""),
+    ("Unsafe yaml.load on upload", "cfg = yaml.load(body)", ""),
+    ("Missing authorization check on delete route", "",
+     _added('@bp.route("/users/<int:user_id>", methods=["DELETE"])', "def delete_user(user_id):")),
+    ("Unauthenticated endpoint", '@app.post("/tenants")', ""),
+])
+def test_canonical_class_with_code_evidence_is_raised(make_finding, capsys, title, snippet, diff):
+    assert _floored(_sec(make_finding, title, snippet), diff) == "CRITICAL"
+    assert "[security_agent] raised HIGH->CRITICAL (" in capsys.readouterr().out
+
+
+def test_medium_is_raised_too(make_finding):
+    assert _floored(_sec(make_finding, "SQL injection", "", severity="MEDIUM"), _added(*SQLI_FSTRING)) == "CRITICAL"
+
+
+# --- negatives: no code evidence for the class --------------------------------------
+
+@pytest.mark.parametrize("title, snippet", [
+    ("SQL injection risk", 'conn.execute("SELECT id FROM members WHERE id = ?", (member_id,))'),
+    ("SQL injection risk", 'cur.execute("UPDATE t SET name = %s WHERE id = %s", (name, i))'),
+    ("Command injection risk", 'subprocess.run(["tar", "czf", dest, folder], check=True)'),
+    ("Hardcoded API key", 'API_KEY = os.environ["API_KEY"]'),
+    ("Hardcoded password", 'PASSWORD = os.getenv("DB_PASSWORD", "x9f8a7b6c5d4e3f2a1")'),
+    ("Hardcoded secret", 'SECRET_KEY = "changeme"'),
+    ("Hardcoded secret", 'SECRET_KEY = "changeme-please-1234567"'),
+    ("Hardcoded token", 'TOKEN = "your_token_goes_here_1234"'),
+    ("Hardcoded API key", 'API_KEY = ""'),
+    ("Unsafe yaml deserialization", "cfg = yaml.safe_load(body)"),
+    ("Unsafe yaml deserialization", "cfg = yaml.load(body, Loader=yaml.SafeLoader)"),
+    ("Missing authentication check", '@bp.route("/users")'),
+    ("Missing authentication check", '@bp.route("/users", methods=["GET"])'),
+    ("Missing auth on export", '@app.get("/export")'),
+])
+def test_no_code_evidence_is_not_raised(make_finding, title, snippet):
+    assert _floored(_sec(make_finding, title, snippet)) == "HIGH"
+
+
+def test_wording_without_code_evidence_anywhere_is_not_raised(make_finding):
+    diff = _added("def total(items):", "    return sum(items)")
+    for title in ("SQL injection", "Command injection", "Hardcoded API key", "Insecure deserialization",
+                  "Missing authorization check"):
+        assert _floored(_sec(make_finding, title, "return sum(items)"), diff) == "HIGH"
+
+
+def test_code_evidence_without_the_class_wording_is_not_raised(make_finding):
+    assert _floored(_sec(make_finding, "Unvalidated input", "subprocess.run(cmd, shell=True)")) == "HIGH"
+
+
+# --- never raised ------------------------------------------------------------------
+
+@pytest.mark.parametrize("severity", ["LOW", "INFO"])
+def test_low_and_info_are_not_raised(make_finding, severity):
+    finding = _sec(make_finding, "SQL injection", "", severity=severity)
+    assert _floored(finding, _added(*SQLI_FSTRING)) == severity
+
+
+@pytest.mark.parametrize("title, description, diff", [
+    ("Path traversal in report download", "missing authorization check; send_file(os.path.join(base, filename))",
+     _added('@bp.route("/reports/<path:filename>", methods=["POST"])')),
+    ("Weak password hashing with MD5", "hardcoded salt and api key handling; hashlib.md5",
+     _added('API_KEY = "sk_live_abcdefghijklmnop1234"')),
+    ("SSRF: server fetches a user-supplied URL", "unauthenticated POST endpoint fetches any URL",
+     _added('@bp.route("/previews", methods=["POST"])', "    resp = requests.get(url)")),
+])
+def test_excluded_classes_are_never_raised(make_finding, title, description, diff):
+    assert _floored(_sec(make_finding, title, "", description=description), diff) == "HIGH"
+
+
+def test_severity_is_never_lowered_and_input_is_not_mutated(make_finding):
+    critical = _sec(make_finding, "Something else entirely", "x = 1", severity="CRITICAL")
+    high = _sec(make_finding, "Command injection", "os.system(cmd)")
+    out = _floor_canonical_vulnerabilities([critical, high], "")
+    assert [f.severity.value for f in out] == ["CRITICAL", "CRITICAL"]
+    assert high.severity.value == "HIGH"
