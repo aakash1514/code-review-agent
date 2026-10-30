@@ -1,0 +1,10 @@
+id: test-02-changed-branch-logic
+description: "5 kg boundary moved from < to <= and a freight branch added"
+file_path: app/shipping.py
+expect_block: false
+issues:
+  - id: boundary
+    category: TEST_COVERAGE
+    lines: [14, 18]
+    severity: MEDIUM
+    note: "existing tests don't cover exactly 5 kg, >30 kg, or express freight"

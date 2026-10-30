@@ -1,0 +1,14 @@
+id: arch-08-leaky-abstraction
+description: "WeatherClient.current returns the raw requests.Response"
+file_path: app/weather.py
+expect_block: false
+issues:
+  - id: leaky
+    category: ARCHITECTURE
+    lines: [14, 20]
+    severity: MEDIUM
+    note: "callers parse provider JSON and check HTTP status themselves (see context/)"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [14, 20]
+    note: "new logic; the agent can't see tests"

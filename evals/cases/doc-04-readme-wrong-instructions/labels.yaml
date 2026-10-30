@@ -1,0 +1,15 @@
+id: doc-04-readme-wrong-instructions
+description: "new 'Running locally' section contradicts the config table (docs-only)"
+file_path: README.md
+expect_block: false
+issues:
+  - id: env-var
+    category: DOCUMENTATION
+    lines: [33, 33]
+    severity: MEDIUM
+    note: "exports DB_URL; the service reads DATABASE_URL"
+  - id: port
+    category: DOCUMENTATION
+    lines: [39, 42]
+    severity: LOW
+    note: "starts on port 5000, then tells you to open :8000"

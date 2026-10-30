@@ -1,0 +1,10 @@
+id: test-06-business-days
+description: "new add_business_days with weekends, holidays and negative offsets"
+file_path: app/calendar_utils.py
+expect_block: false
+issues:
+  - id: bizdays
+    category: TEST_COVERAGE
+    lines: [11, 22]
+    severity: MEDIUM
+    note: "weekend/holiday/negative/zero-day edges untested"

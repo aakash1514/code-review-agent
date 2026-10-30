@@ -1,0 +1,5 @@
+id: clean-04-money-value
+description: "frozen Money value type with currency check on add, tests in context"
+file_path: app/money.py
+expect_block: false
+issues: []

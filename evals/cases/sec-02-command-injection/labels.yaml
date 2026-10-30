@@ -1,0 +1,17 @@
+id: sec-02-command-injection
+description: "shell=True tar command built from a JSON request field"
+file_path: app/backups.py
+expect_block: true
+issues:
+  - id: cmdi
+    category: SECURITY
+    lines: [28, 31]
+    severity: CRITICAL
+    note: "request.json folder reaches subprocess.run(shell=True)"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [26, 33]
+    note: "new logic; the agent can't see tests"
+  - category: ARCHITECTURE
+    lines: [28, 28]
+    note: "request.json['folder'] KeyError gives a 500"

@@ -1,0 +1,14 @@
+id: arch-03-circular-import
+description: "orders now imports billing, which already imports orders (see context/)"
+file_path: app/orders.py
+expect_block: false
+issues:
+  - id: cycle
+    category: ARCHITECTURE
+    lines: [2, 2]
+    severity: HIGH
+    note: "top-level from-import cycle -> ImportError at startup"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [22, 28]
+    note: "new logic; the agent can't see tests"

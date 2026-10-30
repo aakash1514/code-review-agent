@@ -1,0 +1,14 @@
+id: arch-06-n-plus-one
+description: "one customer lookup per ticket in a loop of up to 500"
+file_path: app/support_dashboard.py
+expect_block: false
+issues:
+  - id: n-plus-one
+    category: ARCHITECTURE
+    lines: [8, 9]
+    severity: MEDIUM
+    note: "customers.get per ticket; repo already has get_many"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [5, 17]
+    note: "new logic; the agent can't see tests"

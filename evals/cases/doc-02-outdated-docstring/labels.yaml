@@ -1,0 +1,19 @@
+id: doc-02-outdated-docstring
+description: "reserve() now raises and returns an id, docstring still says True/False"
+file_path: app/inventory.py
+expect_block: false
+issues:
+  - id: stale-doc
+    category: DOCUMENTATION
+    lines: [13, 18]
+    severity: MEDIUM
+    note: "docstring contradicts the new return type and the exception"
+  - id: breaking
+    category: ARCHITECTURE
+    lines: [13, 25]
+    severity: HIGH
+    note: "context caller does `if not reserve(...)`; now gets an uncaught exception"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [13, 32]
+    note: "new logic; the agent can't see tests"

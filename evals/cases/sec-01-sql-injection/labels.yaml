@@ -1,0 +1,14 @@
+id: sec-01-sql-injection
+description: "f-string SQL query built from a public search parameter"
+file_path: app/directory.py
+expect_block: true
+issues:
+  - id: sqli
+    category: SECURITY
+    lines: [19, 23]
+    severity: CRITICAL
+    note: "request.args q interpolated into LIKE clause"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [17, 24]
+    note: "new logic; the agent can't see tests"

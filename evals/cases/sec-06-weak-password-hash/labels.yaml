@@ -1,0 +1,14 @@
+id: sec-06-weak-password-hash
+description: "passwords stored as unsalted MD5"
+file_path: app/accounts.py
+expect_block: false
+issues:
+  - id: md5
+    category: SECURITY
+    lines: [12, 14]
+    severity: HIGH
+    note: "hashlib.md5 for password storage"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [12, 31]
+    note: "new logic; the agent can't see tests"

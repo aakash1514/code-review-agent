@@ -1,0 +1,14 @@
+id: test-03-error-path-untested
+description: "CSV row parser with four ValueError paths; only the happy path is tested"
+file_path: app/importer.py
+expect_block: false
+issues:
+  - id: error-paths
+    category: TEST_COVERAGE
+    lines: [20, 31]
+    severity: MEDIUM
+    note: "bad email, bad/future date, bad credit limit untested"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [35, 43]
+    note: "parse_rows line numbering/error collection"

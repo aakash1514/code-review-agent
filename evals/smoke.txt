@@ -1,0 +1,10 @@
+# 8-case smoke subset (future CI eval gate): 2 security, 2 architecture,
+# 1 test coverage, 1 documentation, 2 clean.
+sec-01-sql-injection
+sec-06-weak-password-hash
+arch-05-swallowed-exception
+arch-07-mutable-default
+test-01-new-public-function
+doc-04-readme-wrong-instructions
+clean-01-slugify
+clean-03-add-logging

@@ -1,0 +1,14 @@
+id: sec-04-unsafe-deserialization
+description: "cart cookie switched from JSON to pickle.loads"
+file_path: app/cart.py
+expect_block: true
+issues:
+  - id: pickle
+    category: SECURITY
+    lines: [20, 20]
+    severity: CRITICAL
+    note: "pickle.loads on a client-controlled cookie = RCE"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [10, 29]
+    note: "new logic; the agent can't see tests"

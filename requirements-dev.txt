@@ -9,6 +9,9 @@ pytest==9.1.1
 httpx==0.28.1
 pytest-cov==7.1.0
 
+# Eval harness (evals/): golden-case labels are YAML.
+pyyaml==6.0.3
+
 # Lets boto3 use `aws login` credentials (AWS_PROFILE=cra-admin) on the
 # laptop. botocore pins the exact awscrt version; botocore itself is pinned
 # through boto3 in requirements.txt. The cloud uses the ECS task role and

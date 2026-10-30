@@ -1,3 +1,4 @@
+import re
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -45,6 +46,16 @@ def _is_gpt_oss(model: str) -> bool:
     return "gpt-oss" in model
 
 
+def _rate_limit_details(resp) -> str:
+    """The x-ratelimit-* / retry-after headers and the (truncated) body of a
+    429, so a daily-quota stop is distinguishable from a per-minute wait.
+    Neither carries the API key; organization ids in the body are masked."""
+    headers = {k.lower(): v for k, v in resp.headers.items()
+               if k.lower().startswith("x-ratelimit-") or k.lower() == "retry-after"}
+    body = re.sub(r"org_\w+", "org_***", resp.text[:500])
+    return f"headers={headers} body={body!r}"
+
+
 class ModelUnavailableError(Exception):
     pass
 
@@ -52,6 +63,11 @@ class ModelUnavailableError(Exception):
 class LLMCallCounter:
     def __init__(self):
         self.calls = 0
+        # Summed from the usage block of every successful (2xx) response,
+        # including ones then rejected as incomplete: those tokens were spent.
+        self.prompt_tokens = 0
+        self.completion_tokens = 0  # includes reasoning_tokens
+        self.reasoning_tokens = 0
 
 
 _call_counter: ContextVar[LLMCallCounter | None] = ContextVar("llm_call_counter", default=None)
@@ -59,8 +75,8 @@ _call_counter: ContextVar[LLMCallCounter | None] = ContextVar("llm_call_counter"
 
 @contextmanager
 def count_llm_calls():
-    """Counts every Groq HTTP request (retries and fallbacks included) made
-    in this context — including from agent threads started with
+    """Counts every Groq HTTP request (retries and fallbacks included), and
+    the tokens of every successful response, made in this context — including from agent threads started with
     asyncio.to_thread, which inherit it. Concurrent reviews each get their
     own count."""
     counter = LLMCallCounter()
@@ -140,6 +156,8 @@ class FreeModelClient:
                 json=body,
                 timeout=90,
             )
+            if resp.status_code == 429:
+                print(f"    [groq] 429 from {model}: {_rate_limit_details(resp)}")
             if resp.status_code == 429 and attempt < max_retries:
                 wait = int(resp.headers.get("retry-after", 5 * (attempt + 1)))
                 print(f"    [groq] rate-limited on {model}, waiting {wait}s")
@@ -152,6 +170,10 @@ class FreeModelClient:
             usage = data.get("usage") or {}
             reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
+            if counter is not None:
+                counter.prompt_tokens += usage.get("prompt_tokens", 0)
+                counter.completion_tokens += completion_tokens
+                counter.reasoning_tokens += reasoning_tokens
             print(f"    [groq] task={task} model={model} effort={effort or '-'} finish={finish_reason} "
                   f"tokens: prompt={usage.get('prompt_tokens', '?')} reasoning={reasoning_tokens} "
                   f"answer={completion_tokens - reasoning_tokens} ({time.monotonic() - started:.1f}s)")

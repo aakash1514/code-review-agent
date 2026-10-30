@@ -1,0 +1,14 @@
+id: doc-01-public-api-no-docstring
+description: "public reconcile() with fuzzy matching and a 3-tuple return has no docstring"
+file_path: app/reconcile.py
+expect_block: false
+issues:
+  - id: no-docstring
+    category: DOCUMENTATION
+    lines: [14, 15]
+    severity: MEDIUM
+    note: "strict/tolerance semantics and return shape undocumented"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [14, 33]
+    note: "new logic; the agent can't see tests"

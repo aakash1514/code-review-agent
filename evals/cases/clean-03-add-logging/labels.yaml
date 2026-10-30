@@ -1,0 +1,5 @@
+id: clean-03-add-logging
+description: "type hints and debug/info logging added to a sync job"
+file_path: app/price_sync.py
+expect_block: false
+issues: []

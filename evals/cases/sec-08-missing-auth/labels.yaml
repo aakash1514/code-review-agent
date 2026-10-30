@@ -1,0 +1,14 @@
+id: sec-08-missing-auth
+description: "new DELETE /admin/users/<id> route lacks @require_admin"
+file_path: app/admin_routes.py
+expect_block: true
+issues:
+  - id: authz
+    category: SECURITY
+    lines: [29, 36]
+    severity: CRITICAL
+    note: "any logged-in user can delete any account"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [31, 36]
+    note: "a test that non-admins get 403 is a fair ask"

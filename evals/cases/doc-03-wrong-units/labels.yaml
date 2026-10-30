@@ -1,0 +1,19 @@
+id: doc-03-wrong-units
+description: "timeout switched to milliseconds, docstring still says seconds"
+file_path: app/http.py
+expect_block: false
+issues:
+  - id: units-doc
+    category: DOCUMENTATION
+    lines: [7, 17]
+    severity: HIGH
+    note: "public helper documents the wrong unit"
+  - id: units-break
+    category: ARCHITECTURE
+    lines: [7, 17]
+    severity: HIGH
+    note: "existing callers pass seconds (10, 60) -> 10 ms / 60 ms timeouts"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [7, 19]
+    note: "new logic; the agent can't see tests"

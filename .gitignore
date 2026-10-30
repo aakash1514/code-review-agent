@@ -55,3 +55,6 @@ review_agent.db-wal
 
 # Local DB backups made before schema migrations
 *.db.bak-*
+
+# Eval harness outputs (python -m evals.run_evals run)
+evals/runs/

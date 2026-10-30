@@ -1,0 +1,14 @@
+id: sec-03-hardcoded-secret
+description: "live payments API key hard-coded in the module"
+file_path: app/payments_client.py
+expect_block: true
+issues:
+  - id: secret
+    category: SECURITY
+    lines: [5, 15]
+    severity: CRITICAL
+    note: "PAYLANE_API_KEY literal, used in the auth header"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [11, 34]
+    note: "new logic; the agent can't see tests"

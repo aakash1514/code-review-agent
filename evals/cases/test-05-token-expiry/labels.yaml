@@ -1,0 +1,10 @@
+id: test-05-token-expiry
+description: "token validity now has clock skew, nbf and audience checks"
+file_path: app/tokens.py
+expect_block: false
+issues:
+  - id: token
+    category: TEST_COVERAGE
+    lines: [14, 24]
+    severity: HIGH
+    note: "auth logic: skew edges, nbf, aud string vs list untested"

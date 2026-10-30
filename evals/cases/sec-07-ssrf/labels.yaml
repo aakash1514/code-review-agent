@@ -1,0 +1,17 @@
+id: sec-07-ssrf
+description: "server fetches any user-supplied URL for link previews"
+file_path: app/previews.py
+expect_block: false
+issues:
+  - id: ssrf
+    category: SECURITY
+    lines: [16, 17]
+    severity: HIGH
+    note: "no scheme/host allowlist; redirects followed; internal/metadata reachable"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [14, 21]
+    note: "new logic; the agent can't see tests"
+  - category: ARCHITECTURE
+    lines: [16, 18]
+    note: "KeyError on missing url; whole body read before truncation"

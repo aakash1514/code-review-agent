@@ -1,0 +1,14 @@
+id: arch-04-duplicated-logic
+description: "loyalty discount tiers copy-pasted into two quote functions"
+file_path: app/pricing.py
+expect_block: false
+issues:
+  - id: dup
+    category: ARCHITECTURE
+    lines: [17, 46]
+    severity: MEDIUM
+    note: "identical tier/cap block in quote_cart and quote_subscription"
+acceptable:
+  - category: TEST_COVERAGE
+    lines: [15, 46]
+    note: "new logic; the agent can't see tests"
