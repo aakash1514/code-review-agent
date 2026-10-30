@@ -162,6 +162,60 @@ def test_harness_crashes_are_left_out_of_repeats():
     assert [len(p) for p in passes] == [0, 1]
 
 
+def test_block_precision_and_recall():
+    results = [
+        (_labels(expect_block=True), _run([], should_block=True)),    # caught
+        (_labels(expect_block=True), _run([], should_block=False)),   # missed
+        (_labels(expect_block=True), _run([], should_block=False)),   # missed
+        (_labels(expect_block=False), _run([], should_block=True)),   # false block
+        (_labels(expect_block=False), _run([], should_block=False)),
+    ]
+    m = scoring.compute_metrics(results)
+    assert m["block.precision"] == 0.5
+    assert m["block.recall"] == pytest.approx(1 / 3)
+    assert scoring.compute_metrics([(_labels(), _run([]))])["block.precision"] is None  # nothing blocked
+
+
+SOURCE = "def load(raw):\n    try:\n        return pickle.loads(raw)\n    except ValueError:\n        return {}\n"
+
+
+@pytest.mark.parametrize("snippet, span", [
+    ("return pickle.loads(raw)", (3, 3)),
+    ("  try:\n    return   pickle.loads(raw)\n", (2, 3)),     # indentation and line breaks normalized
+    ("return {}", (5, 5)),
+    ("return", (3, 3)),                                       # first match wins
+    ("return json.loads(raw)", None),
+    ("", None),
+])
+def test_snippet_span(snippet, span):
+    assert scoring.snippet_span(snippet, SOURCE) == span
+
+
+def _snip(start, snippet, category="SECURITY", severity="CRITICAL"):
+    f = _f(category=category, severity=severity, start=start)
+    f["location"]["snippet"] = snippet
+    return f
+
+
+def test_anchoring_moves_findings_to_their_snippet_and_falls_back_to_reported_lines():
+    run = _run([_snip(40, "return pickle.loads(raw)"), _snip(5, ""), _snip(7, "not in the file")])
+    anchored = scoring.anchor_run(run, SOURCE)
+    assert [scoring.finding_lines(f) for f in anchored["findings"]] == [(3, 3), (5, 5), (7, 7)]
+    assert anchored["anchored"] == 1
+    assert run["findings"][0]["location"]["line_start"] == 40  # the original run is untouched
+    assert scoring.anchor_run(run, None)["anchored"] == 0
+
+
+def test_anchored_scoring_turns_a_wrong_line_finding_into_a_match():
+    labels = _labels([_issue(lines=(3, 3), severity="CRITICAL")], expect_block=True)
+    cases = [(labels, {"runs": [_run([_snip(40, "return pickle.loads(raw)")], should_block=True)]})]
+    strict = scoring.compute_metrics(scoring.results_by_repeat(cases)[0])
+    snippet = scoring.compute_metrics(scoring.results_by_repeat(scoring.anchor_cases(cases, {"c1": SOURCE}))[0])
+    assert (strict["SECURITY.recall"], strict["critical.false_rate"]) == (0.0, 1.0)
+    assert (snippet["SECURITY.recall"], snippet["critical.false_rate"]) == (1.0, 0.0)
+    assert strict["block.recall"] == snippet["block.recall"] == 1.0
+
+
 def test_unmatched_findings_lists_medium_and_above_only():
     labels = _labels([_issue()], acceptable=[{"category": "ARCHITECTURE", "lines": [30, 30]}])
     case_json = {"runs": [_run([_f(), _f(severity="HIGH", start=60, title="extra"),

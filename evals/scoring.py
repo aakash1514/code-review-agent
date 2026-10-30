@@ -11,7 +11,14 @@ positive.
 
 Precision counts only findings of severity >= MEDIUM; recall counts an issue
 as found when any finding matched it, whatever its severity.
+
+Snippet-anchored scoring is a second, secondary metric: agents' reported
+line numbers are often off (docs/KNOWN_ISSUES.md #10), so anchor_run moves
+each finding to where its snippet sits in the file after the change (first
+whitespace-normalized match), keeping the reported lines when the snippet is
+empty or not found. The same metrics are then computed on the anchored runs.
 """
+import copy
 import math
 from statistics import mean
 
@@ -44,6 +51,41 @@ def overlaps(finding: dict, lines: list[int], tolerance: int = LINE_TOLERANCE) -
     if span is None:
         return False
     return span[0] <= lines[1] + tolerance and lines[0] - tolerance <= span[1]
+
+
+def snippet_span(snippet: str, source: str) -> tuple[int, int] | None:
+    """(first, last) line of the first occurrence of snippet in source, with
+    whitespace normalized (compared as whitespace-separated tokens), or None."""
+    want = snippet.split()
+    if not want:
+        return None
+    tokens = [(tok, n) for n, line in enumerate(source.splitlines(), start=1) for tok in line.split()]
+    for i in range(len(tokens) - len(want) + 1):
+        if all(tokens[i + j][0] == want[j] for j in range(len(want))):
+            return tokens[i][1], tokens[i + len(want) - 1][1]
+    return None
+
+
+def anchor_run(run: dict, source: str | None) -> dict:
+    """Copy of run whose findings take their lines from their snippet's place
+    in source; findings with no snippet, or one not found, keep their lines.
+    Adds run["anchored"] = number of findings moved or confirmed by the snippet."""
+    out = copy.deepcopy(run)
+    out["anchored"] = 0
+    for f in out.get("findings", []):
+        loc = f.get("location") or {}
+        span = snippet_span(loc.get("snippet") or "", source) if source else None
+        if span:
+            loc["line_start"], loc["line_end"] = span
+            out["anchored"] += 1
+    return out
+
+
+def anchor_cases(cases: list[tuple[dict, dict]], sources: dict[str, str]) -> list[tuple[dict, dict]]:
+    """(labels, case_json) pairs with every run anchored to sources[case id]."""
+    return [(labels, {**cj, "runs": [r if r.get("harness_error") else anchor_run(r, sources.get(labels["id"]))
+                                      for r in cj["runs"]]})
+            for labels, cj in cases]
 
 
 def classify_findings(labels: dict, findings: list[dict]) -> list[dict]:
@@ -91,7 +133,7 @@ def compute_metrics(results: list[tuple[dict, dict]]) -> dict:
                for c in CATEGORIES}
     sev_exact = sev_within_one = sev_total = 0
     critical_total = critical_false = clean_with_critical = 0
-    block_correct = false_blocks = missed_blocks = 0
+    block_correct = false_blocks = missed_blocks = blocks = expected_blocks = caught_blocks = 0
     runs_with_agent_errors = 0
     latencies, calls, prompt_toks, completion_toks, reasoning_toks = [], [], [], [], []
 
@@ -136,6 +178,9 @@ def compute_metrics(results: list[tuple[dict, dict]]) -> dict:
         block_correct += expect == got
         false_blocks += got and not expect
         missed_blocks += expect and not got
+        blocks += got
+        expected_blocks += expect
+        caught_blocks += expect and got
 
         runs_with_agent_errors += any(a.get("error") for a in run.get("agents", []))
         latencies.append(run["wall_ms"])
@@ -162,6 +207,8 @@ def compute_metrics(results: list[tuple[dict, dict]]) -> dict:
     m["block.accuracy"] = _ratio(block_correct, len(results))
     m["block.false_blocks"] = false_blocks
     m["block.missed_blocks"] = missed_blocks
+    m["block.precision"] = _ratio(caught_blocks, blocks)        # blocked cases that should block
+    m["block.recall"] = _ratio(caught_blocks, expected_blocks)  # should-block cases that were blocked
     m["ops.runs_with_agent_errors"] = runs_with_agent_errors
     m["ops.latency_ms_mean"] = mean(latencies) if latencies else None
     m["ops.latency_ms_p50"] = _percentile(latencies, 0.50)

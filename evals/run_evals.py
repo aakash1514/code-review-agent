@@ -263,12 +263,24 @@ def _table(header: list[str], rows: list[list[str]]) -> list[str]:
             + ["| " + " | ".join(r) + " |" for r in rows])
 
 
-def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]]) -> str:
+def load_sources(cases: list[tuple[dict, dict]]) -> dict[str, str]:
+    """case id -> the file after the change, for the cases still in evals/cases."""
+    return {labels["id"]: load_case(CASES_DIR / labels["id"]).after
+            for labels, _ in cases if (CASES_DIR / labels["id"] / "labels.yaml").is_file()}
+
+
+def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]],
+                  sources: dict[str, str] | None = None) -> str:
     passes = scoring.results_by_repeat(cases)
     per_repeat = [scoring.compute_metrics(p) for p in passes if p]
     if not per_repeat:
         return f"# Eval report: {run_dir.name}\n\nNo completed runs.\n"
     agg = scoring.aggregate(per_repeat)
+    anchored_cases = scoring.anchor_cases(cases, sources or {})
+    snip = scoring.aggregate([scoring.compute_metrics(p) for p in scoring.results_by_repeat(anchored_cases) if p])
+    anchored_runs = [r for _, cj in anchored_cases for r in cj["runs"] if not r.get("harness_error")]
+    n_anchored = sum(r["anchored"] for r in anchored_runs)
+    n_findings = sum(len(r["findings"]) for r in anchored_runs)
     flags = meta.get("flags", {})
     failed = sum(1 for _, cj in cases for r in cj["runs"] if r.get("harness_error"))
 
@@ -284,6 +296,9 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]]) -> 
                f"line match tolerance ±{scoring.LINE_TOLERANCE}.")
     out.append(f"- **Acceptable findings >= MEDIUM (excluded from FP): {_cell(agg, 'ALL.acceptable', 'int')}** "
                "(mostly TEST_COVERAGE on new code; the agent sees no test files).")
+    out.append(f"- Strict scoring uses the agents' reported lines (primary). The *snippet* columns are secondary: "
+               f"{n_anchored} of {n_findings} findings were re-anchored to where their snippet sits in the file; "
+               "the rest keep their reported lines.")
 
     out += ["", "## Per category", ""]
     rows = []
@@ -291,20 +306,25 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]]) -> 
         rows.append([cat, _cell(agg, f"{cat}.issues", "int"), _cell(agg, f"{cat}.recall", "pct"),
                      _cell(agg, f"{cat}.precision", "pct"), _cell(agg, f"{cat}.tp", "int"),
                      _cell(agg, f"{cat}.fp", "int"), _cell(agg, f"{cat}.dup", "int"),
-                     _cell(agg, f"{cat}.acceptable", "int"), _cell(agg, f"{cat}.low", "int")])
-    out += _table(["Category", "Issues", "Recall", "Precision", "TP", "FP", "Dup", "Acceptable", "LOW/INFO"], rows)
+                     _cell(agg, f"{cat}.acceptable", "int"), _cell(agg, f"{cat}.low", "int"),
+                     _cell(snip, f"{cat}.recall", "pct"), _cell(snip, f"{cat}.precision", "pct")])
+    out += _table(["Category", "Issues", "Recall", "Precision", "TP", "FP", "Dup", "Acceptable", "LOW/INFO",
+                   "Recall (snippet)", "Precision (snippet)"], rows)
 
     out += ["", "## Severity, blocking", ""]
-    out += _table(["Metric", "Value"], [
-        ["Matched issues with exact severity", _cell(agg, "severity.exact", "pct")],
-        ["Matched issues within one level", _cell(agg, "severity.within_one", "pct")],
-        ["CRITICAL findings", _cell(agg, "critical.total", "int")],
-        ["False-CRITICAL rate", _cell(agg, "critical.false_rate", "pct")],
-        ["Clean cases with any CRITICAL", _cell(agg, "critical.clean_cases_with_critical", "int")],
-        ["Block accuracy", _cell(agg, "block.accuracy", "pct")],
-        ["False blocks", _cell(agg, "block.false_blocks", "int")],
-        ["Missed blocks", _cell(agg, "block.missed_blocks", "int")],
-    ])
+    out += _table(["Metric", "Strict", "Snippet-anchored"], [
+        [name, _cell(agg, key, kind), _cell(snip, key, kind)] for name, key, kind in [
+            ("Matched issues with exact severity", "severity.exact", "pct"),
+            ("Matched issues within one level", "severity.within_one", "pct"),
+            ("CRITICAL findings", "critical.total", "int"),
+            ("False-CRITICAL rate", "critical.false_rate", "pct"),
+            ("Clean cases with any CRITICAL", "critical.clean_cases_with_critical", "int"),
+            ("Block accuracy", "block.accuracy", "pct"),
+            ("Block precision (blocked that should block)", "block.precision", "pct"),
+            ("Block recall (should-block cases blocked)", "block.recall", "pct"),
+            ("False blocks", "block.false_blocks", "int"),
+            ("Missed blocks", "block.missed_blocks", "int"),
+        ]])
 
     out += ["", "## Ops (per case)", ""]
     out += _table(["Metric", "Value"], [
@@ -365,7 +385,7 @@ def cmd_score(args) -> int:
     if not cases:
         print(f"no case results in {run_dir}")
         return 2
-    report = render_report(run_dir, meta, cases)
+    report = render_report(run_dir, meta, cases, load_sources(cases))
     print(report)
     if args.md:
         (run_dir / "report.md").write_text(report, encoding="utf-8")

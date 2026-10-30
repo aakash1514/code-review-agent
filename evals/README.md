@@ -69,6 +69,14 @@ counts findings of MEDIUM or above. Recall counts an issue as found at any
 severity. With `--repeat N`, the report gives the mean with the (min–max) range.
 It also lists every unmatched finding of MEDIUM or above for hand triage.
 
+Strict scoring on the agents' reported lines is the primary metric. Reported
+lines are often off (`docs/KNOWN_ISSUES.md` #10), so the report adds secondary
+*snippet-anchored* columns. Each finding is moved to where its snippet sits in
+the file after the change: the first match, with whitespace normalized. It
+keeps its reported lines when the snippet is empty or isn't found. The report
+also gives block precision (blocked cases that should block) and block recall
+(should-block cases that were blocked).
+
 ## Limitations
 
 - The test-coverage agent sees no test files, so it flags most new logic. In the
@@ -81,3 +89,5 @@ It also lists every unmatched finding of MEDIUM or above for hand triage.
   `arch-03`, `arch-05`).
 - The architecture agent drops any finding that mentions "sql" or "database
   query", and `--no-severity-cap` doesn't turn that off (`docs/KNOWN_ISSUES.md` #9).
+- Agent line numbers are often off, which costs strict matches; see the
+  snippet-anchored columns (`docs/KNOWN_ISSUES.md` #10).
