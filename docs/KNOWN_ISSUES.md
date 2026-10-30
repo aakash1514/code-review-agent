@@ -28,3 +28,6 @@ Deferred fixes and open questions, each with when it should be fixed.
 
 9. **The architecture agent drops every finding that mentions SQL.** `agents/architecture_agent._strip_security_leaks` removes ANY finding whose title or description contains "sql" or "database query". Legitimate architecture findings, such as an N+1 query loop, are dropped with them. The eval's `--no-severity-cap` doesn't disable this filter.
    **Fix when:** the evals show it costing architecture recall (watch `arch-06-n-plus-one`). Narrow the keyword list to injection wording, or rely on the snippet-pattern check alone.
+
+10. **Agent-reported line ranges are often wrong.** The agents number lines in the source fragment they're shown, not in the file, and they guess, so `line_start`/`line_end` often don't point at the code the finding quotes. In the eval run `full-r1`, 37 of 157 findings are more than 3 lines from their own snippet. The wrong lines reach PR review comments and the dashboard's "View in code" link. The evals report a secondary snippet-anchored score for this reason (`evals/RESULTS.md`).
+   **Fix when:** next change to finding parsing or PR comment posting. After parsing an agent's output, re-anchor each finding's lines from where its snippet sits in the file after the change, and keep the reported lines only when the snippet isn't found.

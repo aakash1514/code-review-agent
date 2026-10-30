@@ -15,19 +15,29 @@
 
 The architecture agent's CRITICAL cap never fired in full-r1 (there's no "downgraded CRITICAL->MEDIUM" line in any log). So in practice the two runs differ only in KG context, plus run-to-run LLM variance.
 
-Raw results and logs are in `evals/runs/{full-r1,baseline-r1}/`, which is git-ignored. Re-score them with `python -m evals.run_evals score <dir> --md`.
+Raw results and logs are in `evals/runs/{full-r1,baseline-r1}/`, which is git-ignored. Re-score them with `python -m evals.run_evals score <dir> --md`. The tables below were re-scored with no LLM calls after snippet-anchored scoring was added.
+
+**Gate:** block precision **100%** (1/1) and block recall **17%** (1/6), the same in both runs and under both scorings. The only case blocked is `sec-04`, which should block. The five other expected-block cases weren't blocked.
+
+## Strict and snippet-anchored scoring
+
+**Strict** scoring (the primary metric) matches a finding to a labelled issue using the line numbers the agent reported. Agents' reported lines are often wrong (KNOWN_ISSUES #10): in full-r1, 37 of 157 findings are more than 3 lines from the code their own snippet quotes. A correct finding can therefore score as a miss plus a false positive.
+
+**Snippet-anchored** scoring (secondary) first moves each finding to where its snippet sits in the file after the change. That's the first match, with whitespace normalized. The finding keeps its reported lines when the snippet is empty or not found, for example a snippet that quotes removed `-` lines. Matching then works as before, with ±3 lines. 129 of 157 findings in full-r1 and 123 of 151 in baseline-r1 were anchored.
+
+Strict is the number to quote, because it's what a PR comment or "View in code" link would point at today. Snippet-anchored shows how much of the gap is a line-number problem rather than a detection problem. On these runs the gap is small and comes almost entirely from one finding, the `sec-04` CRITICAL.
 
 ## Per-category precision and recall
 
-Precision counts findings of MEDIUM or above, excluding duplicates and `acceptable` ones. Recall counts an issue as found at any severity. A finding matches an issue on the same category with line overlap ±3.
+Precision counts findings of MEDIUM or above, excluding duplicates and `acceptable` ones. Recall counts an issue as found at any severity. A finding matches an issue on the same category with line overlap ±3. Each cell gives strict / snippet-anchored.
 
-| Category | Issues | full-r1 recall | baseline recall | full-r1 precision | baseline precision | full-r1 TP / FP | baseline TP / FP |
+| Category | Issues | full-r1 recall | baseline recall | full-r1 precision | baseline precision | full-r1 TP / FP (strict) | baseline TP / FP (strict) |
 |---|---|---|---|---|---|---|---|
-| SECURITY | 8 | 88% | 100% | 64% | 73% | 7 / 4 | 8 / 3 |
-| ARCHITECTURE | 10 | 90% | 90% | 21% | 22% | 9 / 33 | 9 / 32 |
-| TEST_COVERAGE | 6 | 100% | 100% | 55% | 67% | 6 / 5 | 6 / 3 |
-| DOCUMENTATION | 8 | 50% | 50% | 0% | 100% | 0 / 1 | 3 / 0 |
-| **ALL** | 32 | **81%** | **84%** | **34%** | **41%** | 22 / 43 | 26 / 38 |
+| SECURITY | 8 | 88% / 100% | 100% / 100% | 64% / 73% | 73% / 73% | 7 / 4 | 8 / 3 |
+| ARCHITECTURE | 10 | 90% / 90% | 90% / 90% | 21% / 21% | 22% / 23% | 9 / 33 | 9 / 32 |
+| TEST_COVERAGE | 6 | 100% / 100% | 100% / 100% | 55% / 55% | 67% / 67% | 6 / 5 | 6 / 3 |
+| DOCUMENTATION | 8 | 50% / 50% | 50% / 50% | 0% / 0% | 100% / 100% | 0 / 1 | 3 / 0 |
+| **ALL** | 32 | **81% / 84%** | **84% / 84%** | **34% / 35%** | **41% / 42%** | 22 / 43 | 26 / 38 |
 
 **Acceptable findings ≥ MEDIUM, excluded from FP:** full-r1 **26** (22 TEST_COVERAGE, 4 ARCHITECTURE); baseline-r1 **27** (25 TEST_COVERAGE, 2 ARCHITECTURE).
 
@@ -35,18 +45,22 @@ Duplicates ≥ MEDIUM: 9 in each run. LOW/INFO findings: full-r1 57, baseline 51
 
 ## Severity, CRITICAL and blocking
 
-| Metric | full-r1 | baseline-r1 |
-|---|---|---|
-| Matched issues with exact severity | 46% | 59% |
-| Matched issues within one level | 96% | 100% |
-| CRITICAL findings | 1 | 1 |
-| False-CRITICAL rate | 100% (1/1)* | 0% (0/1) |
-| Clean cases with any CRITICAL | 0 | 0 |
-| Block accuracy (33 cases) | 85% | 85% |
-| False blocks | 0 | 0 |
-| Missed blocks | 5 | 5 |
+| Metric | full-r1 strict | full-r1 snippet | baseline strict | baseline snippet |
+|---|---|---|---|---|
+| Matched issues with exact severity | 46% | 48% | 59% | 59% |
+| Matched issues within one level | 96% | 96% | 100% | 100% |
+| CRITICAL findings | 1 | 1 | 1 | 1 |
+| False-CRITICAL rate | 100% (1/1)* | 0% (0/1) | 0% (0/1) | 0% (0/1) |
+| Clean cases with any CRITICAL | 0 | 0 | 0 | 0 |
+| Block accuracy (33 cases) | 85% | 85% | 85% | 85% |
+| Block precision (blocked that should block) | 100% (1/1) | 100% | 100% (1/1) | 100% |
+| Block recall (should-block cases blocked) | 17% (1/6) | 17% | 17% (1/6) | 17% |
+| False blocks | 0 | 0 | 0 | 0 |
+| Missed blocks | 5 | 5 | 5 | 5 |
 
-\* The one CRITICAL in full-r1 is a correct finding with a wrong line number. On `sec-04`, the agent reported "Insecure deserialization of client-controlled cookie" at lines 12–15, but its snippet is `pickle.loads(...)`, which is on line 20, where the label is. Anchored to its snippet, it matches the labelled issue, which would make full-r1 SECURITY recall 100% and the false-CRITICAL rate 0%. See *Line numbers* below.
+Blocking comes from the HITL gate, not from line matching, so it's the same under both scorings.
+
+\* The one CRITICAL in full-r1 is a correct finding with a wrong line number. On `sec-04`, the agent reported "Insecure deserialization of client-controlled cookie" at lines 12–15, but its snippet is `pickle.loads(...)`, which is on line 20, where the label is. Snippet-anchored, it matches the labelled issue: SECURITY recall 100% and false-CRITICAL 0%.
 
 Both runs blocked only `sec-04`. They missed the same five blocks: `sec-01`, `sec-02`, `sec-03`, `sec-08` and `arch-05`. In every one of these the issue was found (recall 1/1) but rated HIGH, not CRITICAL. Neither run produced a false block.
 
@@ -178,7 +192,7 @@ Tally of the 43 counted as FP: noise 27, plausible 9, TC (no tests) 5, wrong lin
 
 ## Known limitations
 
-- **Line numbers are approximate.** In 37 of 157 full-r1 findings (31 of 149 in baseline-r1), the reported `line_start` is more than 3 lines from where the finding's own snippet sits in the file. Production has the same behaviour (`pipeline/synthesizer.py` notes that the fragment renumbers from 1), so the harness reproduces it as is. The scorer matches on reported lines, so this can turn a true positive into a miss plus an FP. On this run only the `sec-04` CRITICAL changes outcome when findings are re-anchored to their snippet: full-r1 SECURITY recall would go from 88% to 100%, false-CRITICAL from 100% to 0%, and every other metric moves by 3 points or less. Snippet-anchored matching in the scorer is a possible follow-up; it isn't applied here.
+- **Line numbers are approximate** ([KNOWN_ISSUES #10](../docs/KNOWN_ISSUES.md)). In 37 of 157 full-r1 findings (31 of 149 in baseline-r1), the reported `line_start` is more than 3 lines from where the finding's own snippet sits in the file. Production has the same behaviour (`pipeline/synthesizer.py` notes that the fragment renumbers from 1), so the harness reproduces it as is. Strict scoring counts these as reported. The snippet-anchored columns show the effect: only the `sec-04` CRITICAL changes outcome, and every other metric moves by 3 points or less.
 - **Mid-function hunks get no KG context**, even with `--context kg`. This affects `sec-02`, `sec-08`, `arch-03` and `arch-05`. See [KNOWN_ISSUES #8](../docs/KNOWN_ISSUES.md).
 - **The architecture agent drops findings that mention "sql" or "database query"**, and `--no-severity-cap` doesn't turn that off. See [KNOWN_ISSUES #9](../docs/KNOWN_ISSUES.md).
 - **The test-coverage agent sees no test files.** TEST_COVERAGE findings on new code in non-TC cases are marked `acceptable`, and their count is reported above (26 and 27).
