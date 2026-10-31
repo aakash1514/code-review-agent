@@ -100,6 +100,14 @@ def test_get_embedder_builds_a_real_boto3_client_for_bedrock(monkeypatch, settin
     assert get_embedder() is embedder  # process-wide
 
 
+def test_bedrock_client_retries_throttling_adaptively():
+    # A full-repo reindex makes hundreds of InvokeModel calls in a row; with
+    # "standard"/5 attempts it failed halfway on a ThrottlingException.
+    retries = BedrockEmbedder(region="ap-south-1").client.meta.config.retries
+    assert retries["mode"] == "adaptive"
+    assert retries["total_max_attempts"] == 11  # the first try + 10 retries
+
+
 def test_region_falls_back_from_embed_region_to_aws_region(monkeypatch):
     monkeypatch.setenv("AWS_REGION", "eu-west-1")
     assert BedrockEmbedder(client=MagicMock()).region == "eu-west-1"
