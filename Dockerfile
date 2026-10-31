@@ -74,7 +74,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 #                                   (ECS stopTimeout is 120 s), then mark the rest interrupted
 #   --proxy-headers                 trust X-Forwarded-* from the ALB for client IP and scheme
 CMD ["uvicorn", "api.webhook:app", \
-     "--host", "0.0.0.0", "--port", "8001", "--workers", "1", \
+     "--host", "0.0.0.0", "--port", "8000", "--workers", "1", \
      "--ws-ping-interval", "20", \
      "--timeout-graceful-shutdown", "90", \
      "--proxy-headers", "--forwarded-allow-ips", "*"]
