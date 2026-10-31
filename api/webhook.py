@@ -17,6 +17,7 @@ from pipeline.runner import run_agents_parallel
 from pipeline.file_filter import plan_review_files
 from agents.documentation_agent import run_documentation_agent
 from tools.model_client import count_llm_calls
+from tools.tracing import traceable
 from pipeline.synthesizer import build_review_report, synthesize_markdown
 from pipeline.hitl_gate import evaluate_hitl_gate, DEFAULT_STATUS_CONTEXT
 from tools.github_tools import get_installation_token, get_pr_diff, get_pr_files, post_pr_review, set_commit_status
@@ -229,6 +230,8 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     return {"status": "accepted", "repo": repo, "pr_number": pr_number, "commit_sha": commit_sha}
 
 
+# The root of the review's LangSmith trace: agents and LLM calls nest under it.
+@traceable(name="review", run_type="chain", tags=["review"])
 async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:
     started = time.monotonic()
     # Every log line of this review, including from agent threads, carries

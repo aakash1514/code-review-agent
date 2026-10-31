@@ -8,9 +8,14 @@
   that forgets to mock GitHub / Groq / Hugging Face / Qdrant fails loudly
   instead of calling them.
 """
+import os
 import socket
 import sys
 import types
+
+# Never send traces from tests, whatever the developer's shell exports.
+os.environ["LANGSMITH_TRACING"] = "false"
+os.environ.pop("LANGSMITH_API_KEY", None)
 
 import pytest
 

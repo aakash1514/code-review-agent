@@ -30,5 +30,8 @@ numpy==2.5.1
 # AWS: Bedrock embeddings (EMBEDDING_PROVIDER=bedrock), later the Bedrock LLM provider
 boto3==1.43.120
 
+# LLM tracing (tools/tracing.py); off unless LANGSMITH_TRACING=true
+langsmith==0.14.16
+
 # config.py loads .env
 python-dotenv==1.2.2
