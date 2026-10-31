@@ -36,7 +36,7 @@ jobs:
   deploy:
     name: Build, push and deploy to ECS
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,6 +82,9 @@ jobs:
 
       # Registers a new revision and updates the service. The service's deployment
       # circuit breaker rolls back automatically if the new task never gets healthy.
+      # 30 minutes: with min healthy 0% the old task stops first (drain + up to
+      # 120 s graceful stop when a review is in flight), then the new one is
+      # provisioned and health-checked; a real deploy took about 15 minutes.
       - name: Deploy to ECS and wait until stable
         uses: aws-actions/amazon-ecs-deploy-task-definition@a00d4d57ac0de1a99b39fe469f3d898d38717c2b # v2.6.4
         with:
@@ -89,7 +92,7 @@ jobs:
           cluster: ${{ vars.ECS_CLUSTER }}
           service: ${{ vars.ECS_SERVICE }}
           wait-for-service-stability: true
-          wait-for-minutes: 15
+          wait-for-minutes: 30
 
       # "Stable" could also mean the circuit breaker rolled back to the old revision,
       # so check that the service is really running the image we just built.
