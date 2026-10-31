@@ -189,6 +189,9 @@ def test_pipeline_reviews_only_planned_files_with_the_right_agents(monkeypatch, 
     out = capsys.readouterr().out
     assert "reviewing 2 file(s), skipping 4" in out
     assert "[review_finished] repo=o/r pr=1 commit=sha1 status=complete" in out and "llm_calls=0" in out
+    # The same event carries the CloudWatch metrics (EMF in JSON mode).
+    assert "ReviewsCompleted=1 ReviewsFailed=0" in out
+    assert "CriticalFindings=0 MergeBlocked=0" in out
 
 
 # --- LLM call counting -----------------------------------------------------------

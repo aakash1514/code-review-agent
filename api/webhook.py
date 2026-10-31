@@ -234,15 +234,40 @@ async def run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> Non
     # Every log line of this review, including from agent threads, carries
     # repo/pr/commit; the closing review_finished event has the numbers.
     with log_context(repo=repo, pr=pr_number, commit=commit_sha[:7]), count_llm_calls() as llm_calls:
+        outcome = None
         try:
-            await _run_review_pipeline(repo, pr_number, commit_sha)
+            outcome = await _run_review_pipeline(repo, pr_number, commit_sha)
         finally:
             job = get_job(repo, commit_sha) or {}
-            log_event("review_finished", status=job.get("status"),
-                      duration_ms=int((time.monotonic() - started) * 1000), llm_calls=llm_calls.calls)
+            duration_ms = int((time.monotonic() - started) * 1000)
+            log_event("review_finished", status=job.get("status"), duration_ms=duration_ms,
+                      llm_calls=llm_calls.calls,
+                      metrics=_review_metrics(job, outcome, duration_ms, llm_calls))
 
 
-async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> None:
+def _review_metrics(job: dict, outcome: dict | None, duration_ms: int, llm_calls) -> dict:
+    """CloudWatch metrics for one finished review (see tools/logs.py, EMF).
+    A review discarded because a newer commit arrived is neither completed
+    nor failed. CriticalFindings/MergeBlocked exist only when the review got
+    as far as the gate."""
+    status = job.get("status")
+    superseded = status == "failed" and "superseded" in (job.get("error") or "")
+    metrics = {
+        "ReviewsCompleted": (1 if status == "complete" else 0, "Count"),
+        "ReviewsFailed": (1 if status in ("failed", "interrupted") and not superseded else 0, "Count"),
+        "ReviewDurationMs": (duration_ms, "Milliseconds"),
+        "LLMCalls": (llm_calls.calls, "Count"),
+        "LLMTokens": (llm_calls.prompt_tokens + llm_calls.completion_tokens, "Count"),
+        "LLMFallbacks": (llm_calls.fallbacks, "Count"),
+        "RateLimitWaitMs": (llm_calls.rate_limit_wait_ms, "Milliseconds"),
+    }
+    if outcome is not None:
+        metrics["CriticalFindings"] = (outcome["critical_findings"], "Count")
+        metrics["MergeBlocked"] = (1 if outcome["merge_blocked"] else 0, "Count")
+    return metrics
+
+
+async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> dict | None:
     update_status(repo, commit_sha, "running")
     await manager.broadcast(repo, {"commit_sha": commit_sha, "stage": "running", "pr_number": pr_number})
 
@@ -344,6 +369,7 @@ async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> No
         await manager.broadcast(repo, {
             "commit_sha": commit_sha, "stage": "complete", "should_block": gate["should_block"],
         })
+        return {"critical_findings": review.critical_count, "merge_blocked": gate["should_block"]}
 
     except Exception as e:
         traceback.print_exc()

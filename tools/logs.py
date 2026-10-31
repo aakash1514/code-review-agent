@@ -14,7 +14,12 @@ CloudWatch Logs Insights then filters on them directly, e.g.
   fields @timestamp, msg | filter repo = "octo/repo" and pr = 7
 
 log_event() writes one explicit event with numeric fields (duration_ms,
-llm_calls, ...) for metrics and queries.
+llm_calls, ...) for metrics and queries. Given metrics=..., the JSON line also
+carries a CloudWatch Embedded Metric Format (EMF) block, so CloudWatch turns
+those values into metrics straight from the log line: no PutMetricData calls
+and no extra IAM permissions. Metrics get a single "Service" dimension and
+nothing per repo or PR, so each one stays one (cheap) time series; the
+per-review detail stays queryable in Logs Insights.
 """
 import contextvars
 import io
@@ -61,15 +66,39 @@ def _record(level: str, msg: str, **fields) -> str:
     return json.dumps(record, default=str, ensure_ascii=False)
 
 
-def log_event(event: str, **fields) -> None:
-    """One structured event. JSON mode: {"event": ..., **fields}. Text mode:
-    '[event] key=value ...' with the current context first."""
+METRICS_NAMESPACE = "CodeReviewAgent"
+METRICS_SERVICE = "code-review-agent"
+
+
+def _emf(metrics: dict[str, tuple[float, str]]) -> dict:
+    """The EMF fields for {name: (value, unit)}: the _aws metadata block plus
+    one top-level field per metric value (EMF reads the values from there)."""
+    return {
+        "_aws": {
+            "Timestamp": int(time.time() * 1000),
+            "CloudWatchMetrics": [{
+                "Namespace": METRICS_NAMESPACE,
+                "Dimensions": [["Service"]],
+                "Metrics": [{"Name": name, "Unit": unit} for name, (_, unit) in metrics.items()],
+            }],
+        },
+        "Service": METRICS_SERVICE,
+        **{name: value for name, (value, _) in metrics.items()},
+    }
+
+
+def log_event(event: str, metrics: dict[str, tuple[float, str]] | None = None, **fields) -> None:
+    """One structured event. JSON mode: {"event": ..., **fields}, plus an EMF
+    block when metrics ({name: (value, unit)}) are given. Text mode:
+    '[event] key=value ...' with the current context first, metrics last."""
+    metrics = {k: v for k, v in (metrics or {}).items() if v is not None and v[0] is not None}
     if log_format() == "json":
+        extra = _emf(metrics) if metrics else {}
         out = _raw()
-        out.write(_record("INFO", event, event=event, **fields) + "\n")
+        out.write(_record("INFO", event, event=event, **fields, **extra) + "\n")
         out.flush()
         return
-    parts = {**_context.get(), **fields}
+    parts = {**_context.get(), **fields, **{k: v for k, (v, _) in metrics.items()}}
     print(f"[{event}] " + " ".join(f"{k}={v}" for k, v in parts.items()), flush=True)
 
 

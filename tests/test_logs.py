@@ -113,3 +113,44 @@ def test_text_mode_changes_nothing(monkeypatch):
     before = sys.stdout
     logs.configure_logging()
     assert sys.stdout is before
+
+# --- CloudWatch Embedded Metric Format ----------------------------------------------
+
+def test_log_event_with_metrics_adds_an_emf_block_in_json_mode(monkeypatch, raw):
+    monkeypatch.setenv("LOG_FORMAT", "json")
+    with log_context(repo="o/r", pr=1):
+        log_event("review_finished", status="complete",
+                  metrics={"ReviewsCompleted": (1, "Count"), "ReviewDurationMs": (1234, "Milliseconds")})
+    (rec,) = records(raw)
+    emf = rec["_aws"]["CloudWatchMetrics"][0]
+    assert emf["Namespace"] == "CodeReviewAgent"
+    assert emf["Dimensions"] == [["Service"]]
+    assert emf["Metrics"] == [{"Name": "ReviewsCompleted", "Unit": "Count"},
+                              {"Name": "ReviewDurationMs", "Unit": "Milliseconds"}]
+    assert isinstance(rec["_aws"]["Timestamp"], int)
+    # EMF reads each value from the top-level field of the same name.
+    assert rec["ReviewsCompleted"] == 1 and rec["ReviewDurationMs"] == 1234
+    assert rec["Service"] == "code-review-agent"
+    # Repo/PR stay plain fields: queryable, but not metric dimensions.
+    assert rec["repo"] == "o/r" and "repo" not in emf["Dimensions"][0]
+
+
+def test_metrics_with_no_value_are_left_out(monkeypatch, raw):
+    monkeypatch.setenv("LOG_FORMAT", "json")
+    log_event("review_finished", metrics={"ReviewsCompleted": (1, "Count"), "MergeBlocked": (None, "Count")})
+    (rec,) = records(raw)
+    assert [m["Name"] for m in rec["_aws"]["CloudWatchMetrics"][0]["Metrics"]] == ["ReviewsCompleted"]
+    assert "MergeBlocked" not in rec
+
+
+def test_no_metrics_means_no_emf_block(monkeypatch, raw):
+    monkeypatch.setenv("LOG_FORMAT", "json")
+    log_event("agent_finished", findings=2)
+    (rec,) = records(raw)
+    assert "_aws" not in rec and "Service" not in rec
+
+
+def test_metrics_in_text_mode_are_plain_key_values(monkeypatch, capsys):
+    monkeypatch.delenv("LOG_FORMAT", raising=False)
+    log_event("review_finished", status="complete", metrics={"LLMCalls": (5, "Count")})
+    assert capsys.readouterr().out == "[review_finished] status=complete LLMCalls=5\n"
