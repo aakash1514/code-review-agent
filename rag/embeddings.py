@@ -175,8 +175,12 @@ class BedrockEmbedder(Embedder):
       BEDROCK_EMBED_REGION  region to call; defaults to AWS_REGION, then ap-south-1
 
     Titan embeds one text per call. Throttling and transient errors are
-    retried by botocore ("standard" mode, 5 attempts); access-denied and
-    validation errors are not, and surface to the caller.
+    retried by botocore in "adaptive" mode (10 retries): on top of retrying
+    with backoff, it rate-limits the client itself once Bedrock starts
+    throttling, so a full-repo reindex (hundreds of calls in a row) slows
+    down instead of failing. "standard" mode with 5 retries gave up halfway
+    through reindexing this repo with a ThrottlingException. Access-denied and
+    validation errors are not retried, and surface to the caller.
     """
     name = "bedrock"
     model = TITAN_MODEL
@@ -197,7 +201,7 @@ class BedrockEmbedder(Embedder):
             client = boto3.client(
                 "bedrock-runtime",
                 region_name=self.region,
-                config=Config(retries={"mode": "standard", "max_attempts": 5},
+                config=Config(retries={"mode": "adaptive", "max_attempts": 10},
                               connect_timeout=5, read_timeout=30),
             )
         self.client = client
