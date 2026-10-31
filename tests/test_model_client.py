@@ -154,3 +154,25 @@ def test_429_logs_rate_limit_headers_and_body_without_secrets(groq, monkeypatch,
     assert "org_01abcXYZ" not in out and "org_***" in out
     assert "test-groq-key" not in out
     assert "rate-limited on openai/gpt-oss-120b, waiting 431s" in out
+
+
+def test_counter_counts_fallbacks_and_rate_limit_waits(groq, monkeypatch):
+    slept = []
+    monkeypatch.setattr(mc.time, "sleep", slept.append)
+    limited = MagicMock(status_code=429, headers={"retry-after": "7"}, text="")
+    # Primary: 429 (waits 7 s) then a truncated answer -> falls back to the other tier.
+    groq.side_effect = [limited, _response(content="", finish_reason="length"), _response(content="[]")]
+
+    with mc.count_llm_calls() as counter:
+        model_client.reason(system="s", user="u", task="security")
+
+    assert slept == [7]
+    assert counter.rate_limit_wait_ms == 7000
+    assert counter.fallbacks == 1
+    assert counter.calls == 3
+
+
+def test_no_fallback_counted_when_the_primary_answers(groq):
+    with mc.count_llm_calls() as counter:
+        model_client.reason(system="s", user="u", task="documentation")
+    assert counter.fallbacks == 0 and counter.rate_limit_wait_ms == 0

@@ -68,6 +68,10 @@ class LLMCallCounter:
         self.prompt_tokens = 0
         self.completion_tokens = 0  # includes reasoning_tokens
         self.reasoning_tokens = 0
+        # Times reason() had to move a task to its other Groq tier.
+        self.fallbacks = 0
+        # Time spent sleeping on 429 retry-after waits.
+        self.rate_limit_wait_ms = 0
 
 
 _call_counter: ContextVar[LLMCallCounter | None] = ContextVar("llm_call_counter", default=None)
@@ -114,6 +118,10 @@ class FreeModelClient:
 
         last_error = None
         for tier in (primary, secondary):
+            if tier == secondary:
+                counter = _call_counter.get()
+                if counter is not None:
+                    counter.fallbacks += 1
             try:
                 return self._call_groq(system, user, model_for[tier], max_tokens, task)
             except Exception as e:
@@ -161,6 +169,8 @@ class FreeModelClient:
             if resp.status_code == 429 and attempt < max_retries:
                 wait = int(resp.headers.get("retry-after", 5 * (attempt + 1)))
                 print(f"    [groq] rate-limited on {model}, waiting {wait}s")
+                if counter is not None:
+                    counter.rate_limit_wait_ms += wait * 1000
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
