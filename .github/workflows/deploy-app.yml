@@ -1,0 +1,116 @@
+name: deploy-app
+
+# Builds the backend image and rolls it out to ECS Fargate.
+# Runs when backend code lands on main (PRs into main must pass `ci` first),
+# or by hand from the Actions tab. Every run waits for your approval
+# (GitHub environment `production`), then gets short-lived AWS credentials
+# through OIDC: no AWS keys are stored in GitHub.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agents/**"
+      - "api/**"
+      - "models/**"
+      - "pipeline/**"
+      - "rag/**"
+      - "scripts/**"
+      - "tools/**"
+      - "config.py"
+      - "requirements.txt"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/deploy-app.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC token for AWS
+  contents: read
+
+# One deploy at a time; a newer one waits instead of cancelling a rollout halfway.
+concurrency:
+  group: deploy-app
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, push and deploy to ECS
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: AWS credentials (OIDC -> cra-gha-deploy)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-deploy-app-${{ github.run_id }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      # Tag = short git SHA, never `latest`: every running task maps to one commit.
+      # The ECR repo has immutable tags, so a tag can't be overwritten.
+      - name: Build and push the image
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          IMAGE="$REGISTRY/$REPOSITORY:${GITHUB_SHA::7}"
+          docker build --provenance=false --sbom=false -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      # The live task definition (env vars, secrets, EFS, roles, logging) stays the
+      # source of truth; the pipeline only swaps the image.
+      - name: Fetch the current task definition
+        run: |
+          aws ecs describe-task-definition --task-definition "${{ vars.ECS_TASK_FAMILY }}" \
+            --query taskDefinition > taskdef.json
+
+      - name: Put the new image into the task definition
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@8d79160660ad39c402a16e5fc7cd2a32e8f7d6b7 # v1.9.1
+        with:
+          task-definition: taskdef.json
+          container-name: ${{ vars.CONTAINER_NAME }}
+          image: ${{ steps.image.outputs.image }}
+
+      # Registers a new revision and updates the service. The service's deployment
+      # circuit breaker rolls back automatically if the new task never gets healthy.
+      - name: Deploy to ECS and wait until stable
+        uses: aws-actions/amazon-ecs-deploy-task-definition@a00d4d57ac0de1a99b39fe469f3d898d38717c2b # v2.6.4
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          service: ${{ vars.ECS_SERVICE }}
+          wait-for-service-stability: true
+          wait-for-minutes: 15
+
+      # "Stable" could also mean the circuit breaker rolled back to the old revision,
+      # so check that the service is really running the image we just built.
+      - name: Verify the running image
+        env:
+          EXPECTED: ${{ steps.image.outputs.image }}
+        run: |
+          TD=$(aws ecs describe-services --cluster "${{ vars.ECS_CLUSTER }}" --services "${{ vars.ECS_SERVICE }}" \
+                 --query 'services[0].taskDefinition' --output text)
+          RUNNING=$(aws ecs describe-task-definition --task-definition "$TD" \
+                 --query 'taskDefinition.containerDefinitions[0].image' --output text)
+          echo "service task definition: $TD"
+          echo "running image:           $RUNNING"
+          if [ "$RUNNING" != "$EXPECTED" ]; then
+            echo "::error::service is not running $EXPECTED (rolled back?)"; exit 1
+          fi
+
+      - name: Smoke test /healthz through CloudFront
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS --max-time 10 "${{ vars.PUBLIC_BASE_URL }}/healthz"; then echo; exit 0; fi
+            echo "attempt $i failed, retrying in 10s"; sleep 10
+          done
+          echo "::error::/healthz did not return 200"; exit 1
