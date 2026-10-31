@@ -14,7 +14,12 @@ python -m evals.run_evals score evals/runs/smoke-1 --md
 `run` options: `--cases smoke|all|id1,id2` (default `smoke`), `--context kg|none`
 (default `kg`: knowledge graph built from the case's files, no vector index),
 `--no-severity-cap` (baseline: the architecture agent's CRITICAL cap turned off
-in the harness process only), `--repeat N`, `--pause S` between cases. Re-running
+in the harness process only), `--no-floor` (ablation: the security agent's
+CRITICAL floor turned off, same way), `--repeat N`, `--pause S` between cases.
+Each run record also keeps the floor's raises (`floor_raises`), the ceiling's
+caps (`ceiling_caps`), model fallbacks (`model_fallbacks`) and the number of
+findings the pipeline re-anchored (`reanchored`); the report header totals
+them. Re-running
 with the same `--out` and flags resumes an interrupted run.
 
 Each case is reviewed like one PR file in `api/webhook._run_review_pipeline`:
@@ -76,6 +81,25 @@ the file after the change: the first match, with whitespace normalized. It
 keeps its reported lines when the snippet is empty or isn't found. The report
 also gives block precision (blocked cases that should block) and block recall
 (should-block cases that were blocked).
+
+## Severity policy
+
+The HITL gate blocks a PR only on a CRITICAL finding, so two deterministic rules
+in `agents/security_agent.py` decide which security classes can block:
+
+- **Floor** (`_floor_canonical_vulnerabilities`): a HIGH or MEDIUM finding is
+  raised to CRITICAL when its wording names a canonical class (SQL injection,
+  command injection, hard-coded live secret, unsafe deserialization, missing
+  auth on a state-changing route) and the code shows that class's pattern.
+  Missing auth needs the evidence near the finding's own snippet.
+- **Ceiling** (`_ceil_context_dependent_classes`, right after the floor): a
+  CRITICAL finding worded as a context-dependent class (SSRF, path traversal,
+  weak hashing, XSS, CSRF, insecure randomness) is capped to HIGH, unless it
+  also qualifies for a canonical class.
+
+Trade-off: a truly critical SSRF or path traversal won't auto-block. It
+reaches human review as HIGH (`docs/KNOWN_ISSUES.md` #11). `--no-floor` turns
+off only the floor.
 
 ## Limitations
 

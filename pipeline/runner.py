@@ -1,5 +1,6 @@
 import asyncio, time
 from models.findings import AgentReport
+from tools.code_tools import reanchor_finding_lines
 from tools.logs import log_context, log_event
 from agents.security_agent import run_security_agent
 from agents.architecture_agent import run_architecture_agent
@@ -21,9 +22,14 @@ async def run_agents_parallel(changed_file: str, diff_snippet: str, retrieved_co
     pass just the documentation agent.
     Agents run via asyncio.to_thread, which (unlike run_in_executor) copies
     the caller's context into the thread, so model_client's per-review LLM
-    call counter sees their calls."""
+    call counter sees their calls.
+    Every agent's findings get their lines re-anchored to their snippet in
+    diff_snippet (agents guess line numbers; KNOWN_ISSUES #10) before
+    on_agent_complete sees them, so PR comments and the dashboard agree."""
+    moved = total = 0
 
     async def _run_one(agent_fn) -> AgentReport:
+        nonlocal moved, total
         agent_name = agent_fn.__module__.split(".")[-1]
         start = time.monotonic()
         # gather() runs each _run_one in its own task (its own context copy),
@@ -39,6 +45,12 @@ async def run_agents_parallel(changed_file: str, diff_snippet: str, retrieved_co
             except Exception as e:
                 result = AgentReport(agent_name=agent_name, findings=[], summary="Agent failed with an unexpected error.",
                                       runtime_ms=int((time.monotonic() - start) * 1000), error=f"{type(e).__name__}: {e}")
+            if result.findings:
+                anchored = reanchor_finding_lines(result.findings, diff_snippet)
+                moved += sum((a.location.line_start, a.location.line_end) != (f.location.line_start, f.location.line_end)
+                             for a, f in zip(anchored, result.findings))
+                total += len(anchored)
+                result = result.model_copy(update={"findings": anchored})
             log_event("agent_finished", duration_ms=int((time.monotonic() - start) * 1000),
                       findings=len(result.findings), error=result.error)
         if on_agent_complete:
@@ -49,4 +61,6 @@ async def run_agents_parallel(changed_file: str, diff_snippet: str, retrieved_co
         return result
 
     tasks = [_run_one(fn) for fn in (agent_functions or AGENT_FUNCTIONS)]
-    return await asyncio.gather(*tasks)
+    reports = await asyncio.gather(*tasks)
+    print(f"    [runner] re-anchored {moved}/{total} finding(s) in {changed_file}")
+    return reports

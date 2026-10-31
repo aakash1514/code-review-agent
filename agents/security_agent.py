@@ -1,8 +1,9 @@
 import json
+import re
 import time
 from models.findings import AgentReport, Finding, Severity, FindingCategory, CodeLocation
 from tools.model_client import model_client, ModelUnavailableError
-from tools.code_tools import detect_sql_patterns
+from tools.code_tools import detect_sql_patterns, find_snippet_spans, new_file_lines
 
 AGENT_NAME = "security"
 
@@ -129,6 +130,184 @@ def _parse_findings_json(raw: str, changed_file: str) -> list[Finding]:
     return findings
 
 
+# Deterministic severity floor, the mirror image of architecture_agent's
+# _cap_routine_edge_case_severity. Eval v1 (evals/RESULTS.md) showed the model
+# finding SQL injection, command injection, a hard-coded live key and an
+# unauthenticated DELETE route but rating them HIGH, so the HITL gate (which
+# blocks only on CRITICAL) let them through: block recall 1/6. Prompt
+# guidance alone doesn't hold severity, so a finding is raised to CRITICAL
+# when BOTH its wording names one of a few canonical classes AND the code
+# shows that class's pattern (in the finding's snippet or the diff's added
+# lines). Deliberately narrow: only HIGH/MEDIUM are raised (a LOW finding with
+# these words is usually a note), nothing is ever lowered, and the classes we
+# deliberately keep at the model's severity (path traversal, weak hashing,
+# SSRF, XSS, CSRF, insecure randomness) are never raised even if they also
+# match.
+_FLOOR_NEVER_RAISE_KEYWORDS = (
+    "path traversal", "directory traversal", "md5", "sha1", "sha-1", "weak hash",
+    "legacy hash", "ssrf", "server-side request", "xss", "cross-site", "csrf",
+    "insecure random", "weak random", "predictable random",
+)
+
+# A string literal, up to its own closing quote (so f"... LIKE '{name}%'" works).
+_SQL_BUILT = (
+    re.compile(r"""\b[rR]?[fF][rR]?(["'])(?:(?!\1).)*\b(SELECT|INSERT|UPDATE|DELETE)\b(?:(?!\1).)*\{""",
+               re.IGNORECASE),                                                   # f-string
+    re.compile(r"""(["'])(?:(?!\1).)*\b(SELECT|INSERT|UPDATE|DELETE)\b(?:(?!\1).)*\1\s*(%|\.format\(|\+)""",
+               re.IGNORECASE),                                                   # %, .format, +
+)
+_SQL_EXEC_CALL = re.compile(r"\b(execute|executemany|raw|text)\(")
+_ASSIGNED_NAME = re.compile(r"^\s*(\w+)\s*=")
+_COMMAND_INJECTION = re.compile(
+    r"""shell\s*=\s*True|\bos\.system\(|\bos\.popen\("""
+    r"""|\bsubprocess\.\w+\(\s*(f["']|[\w.]+\s*\+|["'][^"']*["']\s*\+|["'][^"']*["']\.format\()""")
+_SECRET_ASSIGNMENT = re.compile(r"""[\w\]"']\s*[:=]\s*["']([A-Za-z0-9_\-]{16,})["']""")
+_SECRET_PREFIXES = ("sk_live_", "sk-", "AKIA", "ghp_", "gho_", "xox", "AIza")
+_SECRET_PLACEHOLDERS = ("changeme", "your_", "xxx", "example", "dummy", "test")
+_UNSAFE_DESERIALIZATION = re.compile(r"\bpickle\.loads?\(|\bmarshal\.loads\(|\byaml\.load\(")
+_STATE_CHANGING_ROUTE = re.compile(
+    r"""^\s*@[\w.]+\.route\(.*methods\s*=\s*[\[(][^\])]*["'](POST|PUT|PATCH|DELETE)["']"""
+    r"""|^\s*@[\w.]+\.(post|put|patch|delete)\(""",
+    re.IGNORECASE)
+
+
+def _sql_injection_evidence(code: str) -> bool:
+    lines = code.splitlines()
+    for i, line in enumerate(lines):
+        if not any(p.search(line) for p in _SQL_BUILT):
+            continue
+        # passed straight to execute(...), possibly opened on a line above
+        if any(_SQL_EXEC_CALL.search(l) for l in lines[max(0, i - 2):i + 1]):
+            return True
+        # or assigned, then executed by name
+        assigned = _ASSIGNED_NAME.match(line)
+        if assigned and re.search(rf"\b(execute|executemany|raw|text)\(\s*{assigned.group(1)}\b", code):
+            return True
+    return False
+
+
+def _looks_like_live_secret(value: str) -> bool:
+    if any(p in value.lower() for p in _SECRET_PLACEHOLDERS):
+        return False
+    if value.startswith(_SECRET_PREFIXES):
+        return True
+    return bool(re.search(r"[A-Za-z]", value) and re.search(r"\d", value))
+
+
+def _hardcoded_secret_evidence(code: str) -> bool:
+    for line in code.splitlines():
+        if "os.environ" in line or "getenv" in line:
+            continue
+        if any(_looks_like_live_secret(m.group(1)) for m in _SECRET_ASSIGNMENT.finditer(line)):
+            return True
+    return False
+
+
+def _unsafe_deserialization_evidence(code: str) -> bool:
+    return any(_UNSAFE_DESERIALIZATION.search(line) and "SafeLoader" not in line
+               for line in code.splitlines())
+
+
+def _state_changing_route(code: str) -> bool:
+    return any(_STATE_CHANGING_ROUTE.search(line) for line in code.splitlines())
+
+
+# Missing auth needs evidence LOCAL to the finding, not anywhere in the diff:
+# any file with one POST route would otherwise let a finding about a
+# different function (or another vuln described as "unauthenticated") block
+# the merge. So: the snippet itself has a state-changing route decorator, or
+# the snippet sits in the added lines with one among the 5 added lines at or
+# above its first line. Snippet empty or not found: no raise.
+_AUTH_ROUTE_WINDOW = 5
+
+
+def _missing_auth_local_evidence(finding: Finding, diff_snippet: str) -> bool:
+    snippet = finding.location.snippet
+    if _state_changing_route(snippet):
+        return True
+    added = new_file_lines(diff_snippet, added_only=True)
+    spans = find_snippet_spans(snippet, added)
+    if not spans:
+        return False
+    first = min(spans, key=lambda s: abs(s[0] - finding.location.line_start))[0]
+    i = next(k for k, (n, _) in enumerate(added) if n == first)
+    window = added[max(0, i - _AUTH_ROUTE_WINDOW + 1):i + 1]
+    return _state_changing_route("\n".join(text for _, text in window))
+
+
+def _secret_wording(text: str) -> bool:
+    return (("hardcoded" in text or "hard-coded" in text)
+            and any(w in text for w in ("secret", "api key", "token", "password", "credential")))
+
+
+def _added_lines(diff_snippet: str) -> str:
+    return "\n".join(l[1:] for l in diff_snippet.splitlines() if l.startswith("+") and not l.startswith("+++"))
+
+
+def _in_snippet_or_added_lines(code_check):
+    """Evidence anywhere in the finding's snippet or the diff's added lines."""
+    return lambda finding, diff_snippet: code_check(finding.location.snippet) or code_check(_added_lines(diff_snippet))
+
+
+# (class name, wording check on lowercase title+description, evidence check on (finding, diff))
+_CANONICAL_CLASSES = (
+    ("sql injection", lambda t: "sql injection" in t, _in_snippet_or_added_lines(_sql_injection_evidence)),
+    ("command injection", lambda t: any(k in t for k in ("command injection", "shell injection", "os command")),
+     _in_snippet_or_added_lines(lambda code: any(_COMMAND_INJECTION.search(l) for l in code.splitlines()))),
+    ("hard-coded secret", _secret_wording, _in_snippet_or_added_lines(_hardcoded_secret_evidence)),
+    ("unsafe deserialization", lambda t: any(k in t for k in ("deserializ", "pickle", "yaml.load", "marshal")),
+     _in_snippet_or_added_lines(_unsafe_deserialization_evidence)),
+    ("missing auth", lambda t: any(k in t for k in ("missing auth", "no auth", "without auth", "lacks auth",
+                                                   "authorization check", "authentication check", "access control")),
+     _missing_auth_local_evidence),
+)
+
+
+def _canonical_class(finding: Finding, text: str, diff_snippet: str) -> str | None:
+    """The first canonical class whose wording (in text) and code evidence both hold."""
+    for name, wording, evidence in _CANONICAL_CLASSES:
+        if wording(text) and evidence(finding, diff_snippet):
+            return name
+    return None
+
+
+def _floor_canonical_vulnerabilities(findings: list[Finding], diff_snippet: str) -> list[Finding]:
+    floored = []
+    for f in findings:
+        if f.severity in (Severity.HIGH, Severity.MEDIUM):
+            text = f"{f.title} {f.description}".lower()
+            if not any(kw in text for kw in _FLOOR_NEVER_RAISE_KEYWORDS):
+                name = _canonical_class(f, text, diff_snippet)
+                if name:
+                    print(f"    [security_agent] raised {f.severity.value}->CRITICAL ({name}): {f.title!r}")
+                    f = f.model_copy(update={"severity": Severity.CRITICAL})
+        floored.append(f)
+    return floored
+
+
+# Severity ceiling, applied right after the floor. The classes the floor never
+# raises (_FLOOR_NEVER_RAISE_KEYWORDS) are context-dependent: how bad an SSRF,
+# a path traversal or a weak hash is depends on what's reachable, which the
+# model can't see from one file. Eval gate-r2 showed the gpt-oss-20b fallback
+# rating a sec-07 SSRF CRITICAL, so the HITL gate blocked a case labelled HIGH.
+# So a CRITICAL finding with that wording is capped to HIGH (it still reaches
+# human review) unless it also qualifies for a canonical floor class, wording
+# and code evidence. Only CRITICAL is touched; the floor and this ceiling
+# together decide which classes can block. Trade-off: a truly critical SSRF
+# won't auto-block (docs/KNOWN_ISSUES.md #11).
+def _ceil_context_dependent_classes(findings: list[Finding], diff_snippet: str) -> list[Finding]:
+    ceiled = []
+    for f in findings:
+        if f.severity == Severity.CRITICAL:
+            text = f"{f.title} {f.description}".lower()
+            keyword = next((kw for kw in _FLOOR_NEVER_RAISE_KEYWORDS if kw in text), None)
+            if keyword and not _canonical_class(f, text, diff_snippet):
+                print(f"    [security_agent] capped CRITICAL->HIGH (context-dependent: {keyword}): {f.title!r}")
+                f = f.model_copy(update={"severity": Severity.HIGH})
+        ceiled.append(f)
+    return ceiled
+
+
 def run_security_agent(
     changed_file: str,
     diff_snippet: str,
@@ -180,6 +359,8 @@ def run_security_agent(
                 error="JSON parse failed twice",
             )
 
+    findings = _floor_canonical_vulnerabilities(findings, diff_snippet)
+    findings = _ceil_context_dependent_classes(findings, diff_snippet)
     runtime_ms = int((time.monotonic() - start) * 1000)
     summary = (
         f"Found {len(findings)} security finding(s)."

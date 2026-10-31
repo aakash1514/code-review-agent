@@ -1,7 +1,7 @@
 """Offline eval harness for the review pipeline.
 
   python -m evals.run_evals run [--cases smoke|all|id1,id2] [--context none|kg]
-                                [--no-severity-cap] [--repeat N] [--pause S]
+                                [--no-severity-cap] [--no-floor] [--repeat N] [--pause S]
                                 [--out evals/runs/<name>]
   python -m evals.run_evals score <run_dir> [--md]
 
@@ -21,6 +21,7 @@ import asyncio
 import io
 import json
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -43,6 +44,18 @@ def disable_severity_cap() -> None:
     function up as a module global on every call, so patching it works."""
     import agents.architecture_agent as architecture_agent
     architecture_agent._cap_routine_edge_case_severity = lambda findings: findings
+
+
+def disable_floor() -> None:
+    """Ablation: the security agent's deterministic CRITICAL floor becomes a
+    no-op in this process only (looked up as a module global, like the cap)."""
+    import agents.security_agent as security_agent
+    security_agent._floor_canonical_vulnerabilities = lambda findings, diff_snippet: findings
+
+
+_FLOOR_LINE = re.compile(r"\[security_agent\] raised (\w+)->CRITICAL \(([^)]*)\): (.*)")
+_CEILING_LINE = re.compile(r"\[security_agent\] capped CRITICAL->HIGH \(context-dependent: ([^)]*)\): (.*)")
+_REANCHOR_LINE = re.compile(r"\[runner\] re-anchored (\d+)/(\d+) finding")
 
 
 def build_context(case: Case, patch: str, mode: str) -> tuple[str, dict]:
@@ -145,6 +158,11 @@ def run_case(case: Case, context_mode: str) -> tuple[dict, str]:
     log = tee.buffer_.getvalue()
     record["rate_limit_waits"] = log.count("[groq] rate-limited")
     record["model_fallbacks"] = log.count("[model_client]")
+    record["floor_raises"] = [{"from": m[0], "class": m[1], "title": m[2].strip().strip("'\"")}
+                              for m in _FLOOR_LINE.findall(log)]
+    record["ceiling_caps"] = [{"keyword": m[0], "title": m[1].strip().strip("'\"")}
+                              for m in _CEILING_LINE.findall(log)]
+    record["reanchored"] = sum(int(m[0]) for m in _REANCHOR_LINE.findall(log))
     return record, log
 
 
@@ -161,9 +179,10 @@ def cmd_run(args) -> int:
 
     cases = load_cases(args.cases)
     flags = {"cases": args.cases, "context": args.context, "severity_cap": not args.no_severity_cap,
-             "repeat": args.repeat}
+             "floor": not args.no_floor, "repeat": args.repeat}
     out = Path(args.out) if args.out else RUNS_DIR / (
-        datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.context}" + ("-nocap" if args.no_severity_cap else ""))
+        datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.context}" + ("-nocap" if args.no_severity_cap else "")
+        + ("-nofloor" if args.no_floor else ""))
     out.mkdir(parents=True, exist_ok=True)
     (out / "logs").mkdir(exist_ok=True)
 
@@ -189,6 +208,8 @@ def cmd_run(args) -> int:
 
     if args.no_severity_cap:
         disable_severity_cap()
+    if args.no_floor:
+        disable_floor()
 
     first = True
     for k in range(args.repeat):
@@ -287,7 +308,9 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]],
     out = [f"# Eval report: {run_dir.name}", ""]
     out.append(f"- Commit `{meta.get('git_sha', '?')[:10]}`{' (dirty)' if meta.get('git_dirty') else ''}, "
                f"models {meta.get('models', {}).get('reasoning', '?')} / {meta.get('models', {}).get('light', '?')}")
+    floor = {None: "n/a (before the floor existed)", True: "on", False: "OFF"}[flags.get("floor")]
     out.append(f"- Flags: context=`{flags.get('context')}`, severity cap {'on' if flags.get('severity_cap', True) else 'OFF'}, "
+               f"security floor {floor}, "
                f"cases=`{flags.get('cases')}`; {len(cases)} cases x {len(per_repeat)} repeat(s)"
                + (f"; {failed} run(s) crashed in the harness (excluded)" if failed else ""))
     if len(per_repeat) > 1:
@@ -296,6 +319,24 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]],
                f"line match tolerance ±{scoring.LINE_TOLERANCE}.")
     out.append(f"- **Acceptable findings >= MEDIUM (excluded from FP): {_cell(agg, 'ALL.acceptable', 'int')}** "
                "(mostly TEST_COVERAGE on new code; the agent sees no test files).")
+    done_runs = [r for _, cj in cases for r in cj["runs"] if not r.get("harness_error")]
+    if any("floor_raises" in r for r in done_runs):
+        raises = [(labels["id"], fr) for labels, cj in cases for r in cj["runs"] for fr in r.get("floor_raises", [])]
+        out.append(f"- Security floor raised {len(raises)} finding(s) to CRITICAL"
+                   + (": " + "; ".join(f"{cid} {fr['from']}->CRITICAL ({fr['class']})" for cid, fr in raises)
+                      if raises else "")
+                   + ".")
+    if any("ceiling_caps" in r for r in done_runs):
+        caps = [(labels["id"], c) for labels, cj in cases for r in cj["runs"] for c in r.get("ceiling_caps", [])]
+        out.append(f"- Security ceiling capped {len(caps)} CRITICAL finding(s) to HIGH"
+                   + (": " + "; ".join(f"{cid} ({c['keyword']})" for cid, c in caps) if caps else "")
+                   + ".")
+    if any("model_fallbacks" in r for r in done_runs):
+        out.append(f"- Model fallbacks (a call moved to the next model): "
+                   f"{sum(r.get('model_fallbacks', 0) for r in done_runs)}.")
+    if any("floor_raises" in r for r in done_runs):
+        out.append(f"- Pipeline re-anchored {sum(r.get('reanchored', 0) for r in done_runs)} finding(s) "
+                   "to their snippet's lines.")
     out.append(f"- Strict scoring uses the agents' reported lines (primary). The *snippet* columns are secondary: "
                f"{n_anchored} of {n_findings} findings were re-anchored to where their snippet sits in the file; "
                "the rest keep their reported lines.")
@@ -402,6 +443,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--context", choices=("none", "kg"), default="kg")
     run.add_argument("--no-severity-cap", action="store_true",
                      help="baseline: turn off the architecture agent's CRITICAL cap")
+    run.add_argument("--no-floor", action="store_true",
+                     help="ablation: turn off the security agent's CRITICAL floor")
     run.add_argument("--repeat", type=int, default=1)
     run.add_argument("--pause", type=float, default=10.0, help="seconds between cases (default 10)")
     run.add_argument("--out", help="run directory (default evals/runs/<timestamp>-<context>)")
