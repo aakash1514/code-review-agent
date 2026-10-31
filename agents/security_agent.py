@@ -141,8 +141,10 @@ def _parse_findings_json(raw: str, changed_file: str) -> list[Finding]:
 # lines). Deliberately narrow: only HIGH/MEDIUM are raised (a LOW finding with
 # these words is usually a note), nothing is ever lowered, and the classes we
 # deliberately keep at the model's severity (path traversal, weak hashing,
-# SSRF, XSS, CSRF, insecure randomness) are never raised even if they also
-# match.
+# SSRF, XSS, CSRF, insecure randomness) are never raised on their own. A
+# finding that also qualifies for a canonical class is still raised, as in
+# the ceiling: eval full-r2's sec-02 command injection stayed HIGH because its
+# description also mentioned path traversal.
 _FLOOR_NEVER_RAISE_KEYWORDS = (
     "path traversal", "directory traversal", "md5", "sha1", "sha-1", "weak hash",
     "legacy hash", "ssrf", "server-side request", "xss", "cross-site", "csrf",
@@ -275,12 +277,10 @@ def _floor_canonical_vulnerabilities(findings: list[Finding], diff_snippet: str)
     floored = []
     for f in findings:
         if f.severity in (Severity.HIGH, Severity.MEDIUM):
-            text = f"{f.title} {f.description}".lower()
-            if not any(kw in text for kw in _FLOOR_NEVER_RAISE_KEYWORDS):
-                name = _canonical_class(f, text, diff_snippet)
-                if name:
-                    print(f"    [security_agent] raised {f.severity.value}->CRITICAL ({name}): {f.title!r}")
-                    f = f.model_copy(update={"severity": Severity.CRITICAL})
+            name = _canonical_class(f, f"{f.title} {f.description}".lower(), diff_snippet)
+            if name:
+                print(f"    [security_agent] raised {f.severity.value}->CRITICAL ({name}): {f.title!r}")
+                f = f.model_copy(update={"severity": Severity.CRITICAL})
         floored.append(f)
     return floored
 
