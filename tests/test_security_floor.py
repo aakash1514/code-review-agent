@@ -150,13 +150,31 @@ def test_low_and_info_are_not_raised(make_finding, severity):
 @pytest.mark.parametrize("title, description, diff", [
     ("Path traversal in report download", "missing authorization check; send_file(os.path.join(base, filename))",
      _added('@bp.route("/reports/<path:filename>", methods=["POST"])')),
-    ("Weak password hashing with MD5", "hardcoded salt and api key handling; hashlib.md5",
-     _added('API_KEY = "sk_live_abcdefghijklmnop1234"')),
+    ("Weak password hashing with MD5", "passwords are stored as hashlib.md5 digests",
+     _added('    digest = hashlib.md5(password.encode()).hexdigest()')),
     ("SSRF: server fetches a user-supplied URL", "unauthenticated POST endpoint fetches any URL",
      _added('@bp.route("/previews", methods=["POST"])', "    resp = requests.get(url)")),
 ])
 def test_excluded_classes_are_never_raised(make_finding, title, description, diff):
     assert _floored(_sec(make_finding, title, "", description=description), diff) == "HIGH"
+
+
+def test_canonical_class_is_raised_even_with_never_raise_words(make_finding, capsys):
+    # sec-02's shape in full-r2: a command injection whose description also mentions path traversal
+    finding = _sec(make_finding, "Command injection via unsanitized user input",
+                   'cmd = f"tar -czf {archive} -C {UPLOAD_ROOT / tenant_id} {folder}"\n'
+                   "subprocess.run(cmd, shell=True, check=True)",
+                   description="An attacker can inject shell commands; it also allows path traversal (../).")
+    assert _floored(finding) == "CRITICAL"
+    assert "[security_agent] raised HIGH->CRITICAL (command injection): " in capsys.readouterr().out
+
+
+def test_pure_path_traversal_high_stays_high(make_finding):
+    finding = _sec(make_finding, "Path traversal in report download",
+                   "return send_file(os.path.join(REPORTS_DIR, filename))",
+                   description="filename comes from the URL, so ../ escapes REPORTS_DIR.")
+    assert _floored(finding, _added('@bp.route("/reports/<path:filename>")', "def download(filename):",
+                                    "    return send_file(os.path.join(REPORTS_DIR, filename))")) == "HIGH"
 
 
 def test_severity_is_never_lowered_and_input_is_not_mutated(make_finding):
