@@ -5,6 +5,7 @@ from contextvars import ContextVar
 
 import requests
 from config import settings
+from tools.tracing import llm_inputs, record_llm_usage, traceable
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -132,6 +133,8 @@ class FreeModelClient:
 
         raise ModelUnavailableError(f"All Groq tiers exhausted for task={task}") from last_error
 
+    # One LLM run per Groq call (retries on 429 included) in the LangSmith trace.
+    @traceable(run_type="llm", name="groq", process_inputs=llm_inputs)
     def _call_groq(self, system: str, user: str, model: str, max_tokens: int, task: str,
                    max_retries: int = 2) -> str:
         body = {
@@ -184,6 +187,7 @@ class FreeModelClient:
                 counter.prompt_tokens += usage.get("prompt_tokens", 0)
                 counter.completion_tokens += completion_tokens
                 counter.reasoning_tokens += reasoning_tokens
+            record_llm_usage("groq", model, usage, finish_reason)
             print(f"    [groq] task={task} model={model} effort={effort or '-'} finish={finish_reason} "
                   f"tokens: prompt={usage.get('prompt_tokens', '?')} reasoning={reasoning_tokens} "
                   f"answer={completion_tokens - reasoning_tokens} ({time.monotonic() - started:.1f}s)")

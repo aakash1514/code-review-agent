@@ -2,10 +2,18 @@ import asyncio, time
 from models.findings import AgentReport
 from tools.code_tools import reanchor_finding_lines
 from tools.logs import log_context, log_event
+from tools.tracing import traceable
 from agents.security_agent import run_security_agent
 from agents.architecture_agent import run_architecture_agent
 from agents.test_coverage_agent import run_test_coverage_agent
 from agents.documentation_agent import run_documentation_agent
+
+def _traced(agent_fn, agent_name: str):
+    """The agent as its own run in the review's LangSmith trace (a no-op when
+    tracing is off). asyncio.to_thread copies the context, so the run nests
+    under the review and the agent's LLM calls nest under it."""
+    return traceable(name=agent_name, run_type="chain", tags=["agent"])(agent_fn)
+
 
 AGENT_FUNCTIONS = [run_security_agent, run_architecture_agent, run_test_coverage_agent, run_documentation_agent]
 
@@ -37,7 +45,7 @@ async def run_agents_parallel(changed_file: str, diff_snippet: str, retrieved_co
         with log_context(agent=agent_name, file=changed_file):
             try:
                 result = await asyncio.wait_for(
-                    asyncio.to_thread(agent_fn, changed_file, diff_snippet, retrieved_context),
+                    asyncio.to_thread(_traced(agent_fn, agent_name), changed_file, diff_snippet, retrieved_context),
                     timeout=timeout_seconds)
             except asyncio.TimeoutError:
                 result = AgentReport(agent_name=agent_name, findings=[], summary=f"Agent timed out after {timeout_seconds}s.",
