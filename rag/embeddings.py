@@ -167,12 +167,45 @@ class HFApiEmbedder(Embedder):
                 time.sleep(wait)
 
 
+class _RateLimiter:
+    """Spaces calls at least 60/per_minute seconds apart, across threads.
+
+    The first call goes straight through; each later one waits for its slot.
+    The sleep happens while holding the lock, so concurrent callers (agent
+    threads embedding queries during a reindex) queue up in order instead of
+    bursting together. per_minute <= 0 turns it off.
+    """
+
+    def __init__(self, per_minute: float, clock=time.monotonic, sleep=time.sleep):
+        self.interval = 60.0 / per_minute if per_minute > 0 else 0.0
+        self._clock = clock
+        self._sleep = sleep
+        self._next = 0.0
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        if not self.interval:
+            return
+        with self._lock:
+            now = self._clock()
+            if self._next > now:
+                self._sleep(self._next - now)
+                now = self._next
+            self._next = now + self.interval
+
+
 class BedrockEmbedder(Embedder):
     """Titan Text Embeddings V2 through bedrock-runtime InvokeModel.
 
     Settings (settings.<name> or environment variable):
       BEDROCK_EMBED_DIM     256, 512 (default) or 1024
       BEDROCK_EMBED_REGION  region to call; defaults to AWS_REGION, then ap-south-1
+      BEDROCK_EMBED_MAX_RPM InvokeModel calls per minute, default 50; 0 = no limit
+
+    The account's Titan V2 quota is 60 requests per minute and can't be raised
+    (Service Quotas: "Not adjustable"), while a full-repo reindex makes several
+    hundred calls in a row. So calls are paced client-side below the quota;
+    retries alone gave up partway through with a ThrottlingException.
 
     Titan embeds one text per call. Throttling and transient errors are
     retried by botocore in "adaptive" mode (10 retries): on top of retrying
@@ -185,7 +218,8 @@ class BedrockEmbedder(Embedder):
     name = "bedrock"
     model = TITAN_MODEL
 
-    def __init__(self, client=None, dim: int | None = None, region: str | None = None):
+    def __init__(self, client=None, dim: int | None = None, region: str | None = None,
+                 max_rpm: float | None = None):
         try:
             dim = int(dim or _setting("BEDROCK_EMBED_DIM", TITAN_DEFAULT_DIM))
         except (TypeError, ValueError):
@@ -205,6 +239,11 @@ class BedrockEmbedder(Embedder):
                               connect_timeout=5, read_timeout=30),
             )
         self.client = client
+        try:
+            max_rpm = float(max_rpm if max_rpm is not None else _setting("BEDROCK_EMBED_MAX_RPM", 50))
+        except (TypeError, ValueError):
+            raise EmbeddingConfigError("BEDROCK_EMBED_MAX_RPM must be a number") from None
+        self._limiter = _RateLimiter(max_rpm)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
@@ -215,6 +254,7 @@ class BedrockEmbedder(Embedder):
         # Titan rejects blank input; an empty chunk still needs a vector.
         text = text[:TITAN_MAX_CHARS] if text and text.strip() else "(empty)"
         body = {"inputText": text, "dimensions": self.dim, "normalize": True}
+        self._limiter.wait()
         response = self.client.invoke_model(
             modelId=self.model,
             body=json.dumps(body),
