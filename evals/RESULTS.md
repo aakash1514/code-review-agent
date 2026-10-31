@@ -1,4 +1,118 @@
-# Eval results: full-r1 vs baseline-r1
+# Eval results
+
+v2 (below) measures PR #5: line re-anchoring in the pipeline, the security agent's CRITICAL floor and its CRITICAL ceiling. v1 (further down) is the first full run and the no-context baseline.
+
+## v2: full-r2 vs full-r1
+
+- **Date:** full-r2 ran on 2026-10-31, in one pass (no daily-limit stop).
+- **Models:** reasoning `openai/gpt-oss-120b`, light `openai/gpt-oss-20b` (Groq), the same as v1.
+- **Git SHA:** full-r2 at `52d1a8a` (clean tree). full-r1 as in v1 (`2fee9a1` / `8c0f98e`).
+- **Command:** `run --cases all --context kg --out evals/runs/full-r2`, the same flags as full-r1, with the security floor on. The ceiling has no flag; it's always on from `b55163f`.
+- **Golden set and labels:** unchanged: 33 cases, 32 issues, 6 expected blocks, 1 repeat.
+
+What changed between the runs, all in PR #5:
+
+1. **Re-anchoring:** `pipeline/runner.py` moves every finding to where its snippet sits in the patch (KNOWN_ISSUES #10).
+2. **Floor:** HIGH/MEDIUM → CRITICAL for five canonical classes when the wording and the code evidence both hold.
+3. **Ceiling:** CRITICAL → HIGH for context-dependent classes (SSRF, path traversal, weak hashing, XSS, CSRF, insecure randomness), unless they also qualify for a canonical class. See the Severity policy in `evals/README.md`.
+
+**Gate:** block precision **100%** (4/4) and block recall **67%** (4/6), up from 100% (1/1) and 17% (1/6) in full-r1. No false blocks. Blocked: `sec-01`, `sec-03`, `sec-04`, `sec-08`. Missed: `sec-02` and `arch-05` (see below).
+
+### Per-category precision and recall
+
+Strict / snippet-anchored.
+
+| Category | Issues | full-r1 recall | full-r2 recall | full-r1 precision | full-r2 precision | full-r1 TP / FP (strict) | full-r2 TP / FP (strict) |
+|---|---|---|---|---|---|---|---|
+| SECURITY | 8 | 88% / 100% | 100% / 100% | 64% / 73% | 62% / 62% | 7 / 4 | 8 / 5 |
+| ARCHITECTURE | 10 | 90% / 90% | 80% / 80% | 21% / 21% | 22% / 22% | 9 / 33 | 8 / 29 |
+| TEST_COVERAGE | 6 | 100% / 100% | 100% / 100% | 55% / 55% | 50% / 50% | 6 / 5 | 5 / 5 |
+| DOCUMENTATION | 8 | 50% / 50% | 38% / 38% | 0% / 0% | 0% / 0% | 0 / 1 | 0 / 1 |
+| **ALL** | 32 | **81% / 84%** | **78% / 78%** | **34% / 35%** | **34% / 34%** | 22 / 43 | 21 / 40 |
+
+**Acceptable findings ≥ MEDIUM, excluded from FP:** full-r1 26, full-r2 27. LOW/INFO findings: full-r1 57, full-r2 47.
+
+**Strict and snippet-anchored now agree.** In full-r2 every metric is identical under both scorings: the pipeline already put each finding on its snippet's lines, so the scorer's re-anchoring changes nothing. In full-r1 the gap was one SECURITY issue (`sec-04`). With one repeat, the other category moves are one issue each and within noise. The ARCHITECTURE recall drop is `arch-05` (agent failed, below) and `arch-03`, where the architecture call fell back to `gpt-oss-20b`.
+
+### Severity, CRITICAL and blocking
+
+| Metric | full-r1 strict | full-r1 snippet | full-r2 strict | full-r2 snippet |
+|---|---|---|---|---|
+| Matched issues with exact severity | 46% | 48% | 64% | 64% |
+| Matched issues within one level | 96% | 96% | 96% | 96% |
+| CRITICAL findings | 1 | 1 | 4 | 4 |
+| False-CRITICAL rate | 100% (1/1)* | 0% (0/1) | 0% (0/4) | 0% (0/4) |
+| Clean cases with any CRITICAL | 0 | 0 | 0 | 0 |
+| Block accuracy (33 cases) | 85% | 85% | 94% | 94% |
+| Block precision (blocked that should block) | 100% (1/1) | 100% | 100% (4/4) | 100% |
+| Block recall (should-block cases blocked) | 17% (1/6) | 17% | 67% (4/6) | 67% |
+| False blocks | 0 | 0 | 0 | 0 |
+| Missed blocks | 5 | 5 | 2 | 2 |
+
+\* The v1 `sec-04` line-number miss; see v1 below.
+
+**Floor raises (4, all HIGH → CRITICAL, each its case's seeded issue):**
+
+| Case | Class | Title |
+|---|---|---|
+| `sec-01-sql-injection` | sql injection | SQL Injection via unsanitized user input |
+| `sec-03-hardcoded-secret` | hard-coded secret | Hardcoded API key |
+| `sec-04-unsafe-deserialization` | unsafe deserialization | Insecure deserialization of client-controlled cookie |
+| `sec-08-missing-auth` | missing auth | Missing authorization check on user deletion endpoint |
+
+**Ceiling caps: 0.** No agent rated a context-dependent class CRITICAL in this run. In `gate-r2`, `sec-07`'s SSRF was CRITICAL from the `gpt-oss-20b` fallback; here it came back HIGH from `gpt-oss-120b`. The ceiling is covered by unit tests but wasn't exercised live.
+
+**Missed blocks:**
+
+- **`sec-02-command-injection`:** the security agent found the issue ("Command injection via unsanitized user input", HIGH, snippet `subprocess.run(cmd, shell=True, check=True)`). Its description also says an attacker can "use path traversal (`../`)". "path traversal" is a never-raise keyword, and the floor skips any finding that contains one, so it stayed HIGH. The ceiling already lets a canonical class win over those keywords; the floor doesn't. Not changed here.
+- **`arch-05-swallowed-exception`:** the architecture agent errored. `gpt-oss-120b` returned a per-minute 429 and the `gpt-oss-20b` fallback returned 413 Payload Too Large, so it produced no findings. The security floor can't cover this case either way.
+
+### Latency, LLM calls and tokens per case
+
+| Metric | full-r1 | full-r2 |
+|---|---|---|
+| Latency mean | 11.6 s | 20.7 s |
+| Latency p50 | 9.2 s | 19.2 s |
+| Latency p95 | 29.3 s | 46.5 s |
+| LLM calls | 4.7 | 5.7 |
+| Prompt tokens | 4,203 | 4,301 |
+| Completion tokens (incl. reasoning) | 2,556 | 2,713 |
+| Reasoning tokens | 1,447 | 1,556 |
+| Groq 429 waits (whole run) | 29 | 56 |
+| Model fallbacks (whole run) | 1 | 6 |
+| Findings re-anchored by the pipeline | n/a (not in v1) | 88 of 144 |
+| Runs with an agent error | 3 | 4 |
+
+The latency rise tracks the 429 waits, which doubled; latency includes them (free tier, 8,000 tokens per minute per model). Re-anchoring, the floor and the ceiling are local string checks and add no LLM calls. No daily-limit (TPD) errors occurred.
+
+**Model fallbacks (6 failed model attempts in 4 cases):**
+- `arch-01`: 2 (test_coverage on `gpt-oss-20b`, security on `gpt-oss-120b`, both 429);
+- `arch-03`: 1 (architecture, 429);
+- `arch-04`: 1 (architecture, 429);
+- `arch-05`: 2 (architecture: 429 on `gpt-oss-120b`, then 413 on `gpt-oss-20b`).
+
+The run record doesn't say which model produced each result; that's deferred as KNOWN_ISSUES #12.
+
+### Agent errors (full-r2)
+
+Kept as they are and counted. An errored agent contributes no findings.
+
+| Case | Agent | Error |
+|---|---|---|
+| `arch-01-god-function` | test_coverage | timeout (45 s, during 429 waits) |
+| `arch-05-swallowed-exception` | architecture | all Groq tiers exhausted (429, then 413) |
+| `arch-05-swallowed-exception` | test_coverage | timeout (45 s) |
+| `doc-02-outdated-docstring` | documentation | JSON parse failed twice |
+| `sec-02-command-injection` | test_coverage | JSON parse failed twice |
+
+### Reading v2
+
+- The gate moved from 1/6 to 4/6 blocks, with no false block and no CRITICAL on a clean case. All four new CRITICALs are their case's labelled issue, and every one came from the floor.
+- The two remaining misses have known causes: a floor rule (`sec-02`, never-raise wording overriding the canonical class) and an agent failure under rate limits (`arch-05`).
+- Detection didn't change measurably: one repeat each, and every category moved by at most one issue.
+- The 67 unmatched findings at MEDIUM or above in full-r2 aren't triaged here. The v1 triage still describes what kind of findings they are (mostly ARCHITECTURE validation and exception-handling noise).
+
+## v1: full-r1 vs baseline-r1
 
 - **Date:** 2026-10-30 (full-r1 started 2026-10-29, resumed and finished 2026-10-30; baseline-r1 ran on 2026-10-30)
 - **Models:** reasoning `openai/gpt-oss-120b`, light `openai/gpt-oss-20b` (Groq), the same for both runs
@@ -19,7 +133,7 @@ Raw results and logs are in `evals/runs/{full-r1,baseline-r1}/`, which is git-ig
 
 **Gate:** block precision **100%** (1/1) and block recall **17%** (1/6), the same in both runs and under both scorings. The only case blocked is `sec-04`, which should block. The five other expected-block cases weren't blocked.
 
-## Strict and snippet-anchored scoring
+### Strict and snippet-anchored scoring
 
 **Strict** scoring (the primary metric) matches a finding to a labelled issue using the line numbers the agent reported. Agents' reported lines are often wrong (KNOWN_ISSUES #10): in full-r1, 37 of 157 findings are more than 3 lines from the code their own snippet quotes. A correct finding can therefore score as a miss plus a false positive.
 
@@ -27,7 +141,7 @@ Raw results and logs are in `evals/runs/{full-r1,baseline-r1}/`, which is git-ig
 
 Strict is the number to quote, because it's what a PR comment or "View in code" link would point at today. Snippet-anchored shows how much of the gap is a line-number problem rather than a detection problem. On these runs the gap is small and comes almost entirely from one finding, the `sec-04` CRITICAL.
 
-## Per-category precision and recall
+### Per-category precision and recall
 
 Precision counts findings of MEDIUM or above, excluding duplicates and `acceptable` ones. Recall counts an issue as found at any severity. A finding matches an issue on the same category with line overlap ±3. Each cell gives strict / snippet-anchored.
 
@@ -43,7 +157,7 @@ Precision counts findings of MEDIUM or above, excluding duplicates and `acceptab
 
 Duplicates ≥ MEDIUM: 9 in each run. LOW/INFO findings: full-r1 57, baseline 51.
 
-## Severity, CRITICAL and blocking
+### Severity, CRITICAL and blocking
 
 | Metric | full-r1 strict | full-r1 snippet | baseline strict | baseline snippet |
 |---|---|---|---|---|
@@ -64,7 +178,7 @@ Blocking comes from the HITL gate, not from line matching, so it's the same unde
 
 Both runs blocked only `sec-04`. They missed the same five blocks: `sec-01`, `sec-02`, `sec-03`, `sec-08` and `arch-05`. In every one of these the issue was found (recall 1/1) but rated HIGH, not CRITICAL. Neither run produced a false block.
 
-## Latency, LLM calls and tokens per case
+### Latency, LLM calls and tokens per case
 
 | Metric | full-r1 | baseline-r1 |
 |---|---|---|
@@ -81,7 +195,7 @@ Both runs blocked only `sec-04`. They missed the same five blocks: `sec-01`, `se
 
 Latency is wall time for one case, cases run one at a time with a 10 s pause between them. It includes Groq free-tier 429 waits (8,000 tokens per minute per model), so it overstates the latency on a paid tier. KG context adds about 100 prompt tokens per case on average.
 
-### Agent errors
+#### Agent errors
 
 These are kept as they are and count in the results. An errored agent contributes no findings.
 
@@ -94,7 +208,7 @@ These are kept as they are and count in the results. An errored agent contribute
 
 The model fallback in full-r1 happened on `sec-06`: one architecture call fell back from `gpt-oss-120b` to `gpt-oss-20b` after repeated per-minute 429s, which is the client's normal fallback path. No daily-limit (TPD/RPD) errors occurred in the resumed part of full-r1 or in baseline-r1. Every 429 logged was a per-minute TPM limit.
 
-## Reading the comparison
+### Reading the comparison
 
 - **One repeat per run, so most of the gaps are within noise.** One issue is 12.5 points of recall on SECURITY and DOCUMENTATION (8 issues each), and 10 points on ARCHITECTURE. The SECURITY recall gap is the `sec-04` line-number miss. The DOCUMENTATION precision gap is 0/1 against 3/0 findings at MEDIUM or above. Use `--repeat 3` before drawing conclusions from differences this size.
 - **Run-independent results.** These hold in both runs:
@@ -105,7 +219,7 @@ The model fallback in full-r1 happened on `sec-06`: one architecture call fell b
   - Five of six expected blocks are missed because severity is rated HIGH, not CRITICAL.
 - KG context didn't measurably help on this set. Many cases have little cross-file structure, and the mid-function cases get no KG context at all (KNOWN_ISSUES #8).
 
-## Triage: unmatched findings ≥ MEDIUM from full-r1
+### Triage: unmatched findings ≥ MEDIUM from full-r1
 
 This list covers all 69 unmatched findings at MEDIUM or above: 43 are counted as FP and 26 match an `acceptable` range.
 
@@ -190,7 +304,7 @@ Verdicts are a first pass from the finding title, its lines and a read of the ca
 
 Tally of the 43 counted as FP: noise 27, plausible 9, TC (no tests) 5, wrong line 1, unverified 1. If all 9 plausible ones were added as labels, full-r1 overall precision would rise from 34% to about 48%. The ARCHITECTURE false positives are dominated by validation and exception-handling noise, which is the clearest precision target.
 
-## Known limitations
+### Known limitations
 
 - **Line numbers are approximate** ([KNOWN_ISSUES #10](../docs/KNOWN_ISSUES.md)). In 37 of 157 full-r1 findings (31 of 149 in baseline-r1), the reported `line_start` is more than 3 lines from where the finding's own snippet sits in the file. Production has the same behaviour (`pipeline/synthesizer.py` notes that the fragment renumbers from 1), so the harness reproduces it as is. Strict scoring counts these as reported. The snippet-anchored columns show the effect: only the `sec-04` CRITICAL changes outcome, and every other metric moves by 3 points or less.
 - **Mid-function hunks get no KG context**, even with `--context kg`. This affects `sec-02`, `sec-08`, `arch-03` and `arch-05`. See [KNOWN_ISSUES #8](../docs/KNOWN_ISSUES.md).
