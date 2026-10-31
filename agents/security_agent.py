@@ -263,19 +263,49 @@ _CANONICAL_CLASSES = (
 )
 
 
+def _canonical_class(finding: Finding, text: str, diff_snippet: str) -> str | None:
+    """The first canonical class whose wording (in text) and code evidence both hold."""
+    for name, wording, evidence in _CANONICAL_CLASSES:
+        if wording(text) and evidence(finding, diff_snippet):
+            return name
+    return None
+
+
 def _floor_canonical_vulnerabilities(findings: list[Finding], diff_snippet: str) -> list[Finding]:
     floored = []
     for f in findings:
         if f.severity in (Severity.HIGH, Severity.MEDIUM):
             text = f"{f.title} {f.description}".lower()
             if not any(kw in text for kw in _FLOOR_NEVER_RAISE_KEYWORDS):
-                for name, wording, evidence in _CANONICAL_CLASSES:
-                    if wording(text) and evidence(f, diff_snippet):
-                        print(f"    [security_agent] raised {f.severity.value}->CRITICAL ({name}): {f.title!r}")
-                        f = f.model_copy(update={"severity": Severity.CRITICAL})
-                        break
+                name = _canonical_class(f, text, diff_snippet)
+                if name:
+                    print(f"    [security_agent] raised {f.severity.value}->CRITICAL ({name}): {f.title!r}")
+                    f = f.model_copy(update={"severity": Severity.CRITICAL})
         floored.append(f)
     return floored
+
+
+# Severity ceiling, applied right after the floor. The classes the floor never
+# raises (_FLOOR_NEVER_RAISE_KEYWORDS) are context-dependent: how bad an SSRF,
+# a path traversal or a weak hash is depends on what's reachable, which the
+# model can't see from one file. Eval gate-r2 showed the gpt-oss-20b fallback
+# rating a sec-07 SSRF CRITICAL, so the HITL gate blocked a case labelled HIGH.
+# So a CRITICAL finding with that wording is capped to HIGH (it still reaches
+# human review) unless it also qualifies for a canonical floor class, wording
+# and code evidence. Only CRITICAL is touched; the floor and this ceiling
+# together decide which classes can block. Trade-off: a truly critical SSRF
+# won't auto-block (docs/KNOWN_ISSUES.md #11).
+def _ceil_context_dependent_classes(findings: list[Finding], diff_snippet: str) -> list[Finding]:
+    ceiled = []
+    for f in findings:
+        if f.severity == Severity.CRITICAL:
+            text = f"{f.title} {f.description}".lower()
+            keyword = next((kw for kw in _FLOOR_NEVER_RAISE_KEYWORDS if kw in text), None)
+            if keyword and not _canonical_class(f, text, diff_snippet):
+                print(f"    [security_agent] capped CRITICAL->HIGH (context-dependent: {keyword}): {f.title!r}")
+                f = f.model_copy(update={"severity": Severity.HIGH})
+        ceiled.append(f)
+    return ceiled
 
 
 def run_security_agent(
@@ -330,6 +360,7 @@ def run_security_agent(
             )
 
     findings = _floor_canonical_vulnerabilities(findings, diff_snippet)
+    findings = _ceil_context_dependent_classes(findings, diff_snippet)
     runtime_ms = int((time.monotonic() - start) * 1000)
     summary = (
         f"Found {len(findings)} security finding(s)."

@@ -1,7 +1,7 @@
 """The security agent's deterministic CRITICAL floor for canonical vulnerabilities."""
 import pytest
 
-from agents.security_agent import _floor_canonical_vulnerabilities
+from agents.security_agent import _ceil_context_dependent_classes, _floor_canonical_vulnerabilities
 
 
 def _added(*lines):
@@ -165,3 +165,44 @@ def test_severity_is_never_lowered_and_input_is_not_mutated(make_finding):
     out = _floor_canonical_vulnerabilities([critical, high], "")
     assert [f.severity.value for f in out] == ["CRITICAL", "CRITICAL"]
     assert high.severity.value == "HIGH"
+
+
+# --- ceiling: context-dependent classes are capped at HIGH --------------------------
+
+def _ceiled(finding, diff=""):
+    [f] = _ceil_context_dependent_classes([finding], diff)
+    return f.severity.value
+
+
+@pytest.mark.parametrize("title, snippet, keyword", [
+    ("Server-Side Request Forgery (SSRF) via unvalidated URL",
+     'url = request.json["url"]\nresp = requests.get(url, timeout=5, allow_redirects=True)', "ssrf"),
+    ("Path traversal in report download", "return send_file(os.path.join(REPORTS_DIR, filename))", "path traversal"),
+    ("Passwords hashed with MD5", "hashlib.md5(password.encode()).hexdigest()", "md5"),
+])
+def test_context_dependent_critical_is_capped_to_high(make_finding, capsys, title, snippet, keyword):
+    assert _ceiled(_sec(make_finding, title, snippet, severity="CRITICAL")) == "HIGH"
+    assert f"[security_agent] capped CRITICAL->HIGH (context-dependent: {keyword}): " in capsys.readouterr().out
+
+
+def test_never_raise_keyword_with_a_canonical_class_stays_critical(make_finding, capsys):
+    finding = _sec(make_finding, "Path traversal enables pickle.loads of attacker file",
+                   "obj = pickle.loads(open(os.path.join(UPLOADS, name), 'rb').read())", severity="CRITICAL")
+    assert _ceiled(finding) == "CRITICAL"
+    assert "capped" not in capsys.readouterr().out
+
+
+def test_canonical_critical_without_never_raise_words_is_untouched(make_finding):
+    assert _ceiled(_sec(make_finding, "SQL injection", "", severity="CRITICAL"), _added(*SQLI_FSTRING)) == "CRITICAL"
+    assert _ceiled(_sec(make_finding, "Something else entirely", "x = 1", severity="CRITICAL")) == "CRITICAL"
+
+
+@pytest.mark.parametrize("severity", ["HIGH", "MEDIUM", "LOW", "INFO"])
+def test_ceiling_touches_only_critical(make_finding, severity):
+    assert _ceiled(_sec(make_finding, "SSRF via user URL", "requests.get(url)", severity=severity)) == severity
+
+
+def test_ceiling_does_not_mutate_input(make_finding):
+    finding = _sec(make_finding, "SSRF via user URL", "requests.get(url)", severity="CRITICAL")
+    _ceil_context_dependent_classes([finding], "")
+    assert finding.severity.value == "CRITICAL"
