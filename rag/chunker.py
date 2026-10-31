@@ -103,14 +103,16 @@ def chunk_non_python_file(file_path: str, source: str, max_chars: int = 1500) ->
     return chunks
 
 
-def _is_top_level(node: ast.AST, tree: ast.AST) -> bool:
-    """Checks whether `node` is a direct child of the module (not nested inside another function/class)."""
-    for parent in ast.walk(tree):
-        if parent is node:
-            continue
-        if hasattr(parent, "body") and node in getattr(parent, "body", []):
-            return isinstance(parent, ast.Module)
-    return False
+def _is_top_level(node: ast.AST, tree: ast.Module) -> bool:
+    """Checks whether `node` is a direct child of the module (not nested inside another function/class).
+
+    Checks the module's own body by identity. The old version walked the whole
+    tree asking `node in parent.body`, which crashed with "argument of type
+    'Name' is not iterable" when it reached a lambda or a conditional
+    expression first (their `body` is a single expression, not a list), and
+    that failed the whole reindex of any repo with such a file.
+    """
+    return any(child is node for child in tree.body)
 
 
 def chunk_file(file_path: str, source: str) -> list[CodeChunk]:
