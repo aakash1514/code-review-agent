@@ -15,8 +15,8 @@ pydantic==2.13.4
 uvicorn[standard]==0.50.2
 
 # GitHub App auth (tools/github_tools.py): RS256 JWT signing needs cryptography
-PyJWT==2.13.0
-cryptography==49.0.0
+PyJWT==2.15.1
+cryptography==50.0.2
 
 # HTTP calls to GitHub / Groq
 requests==2.34.2

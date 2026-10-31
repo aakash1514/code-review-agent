@@ -19,7 +19,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Only the requirements first, so code changes don't reinstall dependencies.
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install -r requirements.txt \
+    # pip isn't needed at run time, and it vendors its own copies of urllib3,
+    # msgpack and setuptools that image scanners flag. Remove it from the venv.
+    && pip uninstall -y pip
 
 # ---- runtime stage: the venv plus the application code ---------------------
 FROM python:${PYTHON_VERSION}-slim AS runtime
@@ -33,7 +36,10 @@ ENV PATH="/opt/venv/bin:$PATH" \
     EMBEDDING_PROVIDER=bedrock \
     AWS_REGION=ap-south-1
 
-RUN groupadd --gid 1000 app \
+# The base image's own pip goes too (same vendored-library findings); nothing
+# installs packages at run time.
+RUN python -m pip uninstall -y pip \
+    && groupadd --gid 1000 app \
     && useradd --uid 1000 --gid app --no-create-home --shell /usr/sbin/nologin app \
     && mkdir -p /data \
     && chown app:app /data
