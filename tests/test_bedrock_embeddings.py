@@ -8,7 +8,7 @@ import pytest
 
 import rag.indexer
 from rag.embeddings import (
-    TITAN_MAX_CHARS, TITAN_MODEL, BedrockEmbedder, EmbeddingConfigError, EmbeddingDimensionError,
+    _RateLimiter, TITAN_MAX_CHARS, TITAN_MODEL, BedrockEmbedder, EmbeddingConfigError, EmbeddingDimensionError,
     HFApiEmbedder, LocalEmbedder, collection_name, get_embedder,
 )
 
@@ -26,6 +26,8 @@ def no_aws_env(monkeypatch, tmp_path):
     monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "aws-credentials"))
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    # No real waiting in unit tests; the limiter has its own tests below.
+    monkeypatch.setenv("BEDROCK_EMBED_MAX_RPM", "0")
 
 
 def fake_bedrock(dim: int = 512) -> MagicMock:
@@ -148,3 +150,61 @@ def test_indexer_searches_the_collection_of_its_embedder(monkeypatch):
 
     used = [c.kwargs["collection_name"] for c in qdrant.query_points.call_args_list]
     assert used == ["codebase_titan512", "codebase_granite384"]
+
+# --- client-side pacing (account quota: 60 Titan calls/min, not adjustable) -------
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+        self.slept = []
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(round(seconds, 6))
+        self.now += seconds
+
+
+def test_limiter_spaces_calls_evenly():
+    fake = FakeClock()
+    limiter = _RateLimiter(50, clock=fake.clock, sleep=fake.sleep)  # 1.2 s apart
+    for _ in range(4):
+        limiter.wait()
+    assert fake.slept == [1.2, 1.2, 1.2]  # the first call doesn't wait
+
+
+def test_limiter_doesnt_wait_when_calls_are_already_slow():
+    fake = FakeClock()
+    limiter = _RateLimiter(60, clock=fake.clock, sleep=fake.sleep)
+    limiter.wait()
+    fake.now += 5  # the caller spent 5 s elsewhere
+    limiter.wait()
+    assert fake.slept == []
+
+
+def test_limiter_off_when_zero():
+    fake = FakeClock()
+    limiter = _RateLimiter(0, clock=fake.clock, sleep=fake.sleep)
+    for _ in range(3):
+        limiter.wait()
+    assert fake.slept == []
+
+
+def test_embedder_paces_invoke_model_calls():
+    fake = FakeClock()
+    embedder = BedrockEmbedder(client=fake_bedrock(), max_rpm=50)
+    embedder._limiter = _RateLimiter(50, clock=fake.clock, sleep=fake.sleep)
+    embedder.embed(["a", "b", "c"])
+    assert fake.slept == [1.2, 1.2]
+
+
+def test_default_pace_is_50_per_minute(monkeypatch):
+    monkeypatch.delenv("BEDROCK_EMBED_MAX_RPM")
+    assert BedrockEmbedder(client=MagicMock())._limiter.interval == pytest.approx(1.2)
+
+
+def test_bad_rpm_setting_is_a_config_error(monkeypatch):
+    monkeypatch.setenv("BEDROCK_EMBED_MAX_RPM", "fast")
+    with pytest.raises(EmbeddingConfigError):
+        BedrockEmbedder(client=MagicMock())
