@@ -1,0 +1,37 @@
+name: oidc-check
+
+# Manual only. Proves GitHub -> AWS OIDC works for the production environment.
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # lets the job request an OIDC token from GitHub
+  contents: read
+
+jobs:
+  whoami:
+    runs-on: ubuntu-latest
+    environment: production   # must match the role's trust policy (sub = ...:environment:production)
+    steps:
+      - name: Assume cra-gha-deploy via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-oidc-check-${{ github.run_id }}
+
+      - name: Who am I
+        run: aws sts get-caller-identity --query Arn --output text
+
+      - name: Allowed call (describe our ECS service)
+        run: |
+          aws ecs describe-services --cluster "${{ vars.ECS_CLUSTER }}" --services "${{ vars.ECS_SERVICE }}" \
+            --query 'services[0].[status,runningCount,taskDefinition]' --output text
+
+      - name: Denied call (list all S3 buckets) - should fail
+        run: |
+          if aws s3api list-buckets --query 'Buckets[].Name' --output text >/dev/null 2>&1; then
+            echo "UNEXPECTED: list-buckets succeeded - role is too broad"; exit 1
+          else
+            echo "denied as expected (least privilege holds)"
+          fi
