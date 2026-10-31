@@ -65,6 +65,7 @@ Strict / snippet-anchored.
 **Missed blocks:**
 
 - **`sec-02-command-injection`:** the security agent found the issue ("Command injection via unsanitized user input", HIGH, snippet `subprocess.run(cmd, shell=True, check=True)`). Its description also says an attacker can "use path traversal (`../`)". "path traversal" is a never-raise keyword, and the floor skips any finding that contains one, so it stayed HIGH. The ceiling already lets a canonical class win over those keywords; the floor doesn't. Not changed here.
+  - **Changed after v2 (not yet measured):** PR #6 made the floor symmetric with the ceiling. A finding that qualifies for a canonical class (wording + code evidence) is now raised even when it also contains a never-raise keyword. Under that rule, `sec-02`'s finding would have been raised to CRITICAL and the case blocked. Findings with never-raise words and no canonical qualification are still never raised.
 - **`arch-05-swallowed-exception`:** the architecture agent errored. `gpt-oss-120b` returned a per-minute 429 and the `gpt-oss-20b` fallback returned 413 Payload Too Large, so it produced no findings. The security floor can't cover this case either way.
 
 ### Latency, LLM calls and tokens per case
