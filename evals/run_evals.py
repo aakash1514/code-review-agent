@@ -54,6 +54,7 @@ def disable_floor() -> None:
 
 
 _FLOOR_LINE = re.compile(r"\[security_agent\] raised (\w+)->CRITICAL \(([^)]*)\): (.*)")
+_CEILING_LINE = re.compile(r"\[security_agent\] capped CRITICAL->HIGH \(context-dependent: ([^)]*)\): (.*)")
 _REANCHOR_LINE = re.compile(r"\[runner\] re-anchored (\d+)/(\d+) finding")
 
 
@@ -159,6 +160,8 @@ def run_case(case: Case, context_mode: str) -> tuple[dict, str]:
     record["model_fallbacks"] = log.count("[model_client]")
     record["floor_raises"] = [{"from": m[0], "class": m[1], "title": m[2].strip().strip("'\"")}
                               for m in _FLOOR_LINE.findall(log)]
+    record["ceiling_caps"] = [{"keyword": m[0], "title": m[1].strip().strip("'\"")}
+                              for m in _CEILING_LINE.findall(log)]
     record["reanchored"] = sum(int(m[0]) for m in _REANCHOR_LINE.findall(log))
     return record, log
 
@@ -322,7 +325,17 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]],
         out.append(f"- Security floor raised {len(raises)} finding(s) to CRITICAL"
                    + (": " + "; ".join(f"{cid} {fr['from']}->CRITICAL ({fr['class']})" for cid, fr in raises)
                       if raises else "")
-                   + f". Pipeline re-anchored {sum(r.get('reanchored', 0) for r in done_runs)} finding(s) "
+                   + ".")
+    if any("ceiling_caps" in r for r in done_runs):
+        caps = [(labels["id"], c) for labels, cj in cases for r in cj["runs"] for c in r.get("ceiling_caps", [])]
+        out.append(f"- Security ceiling capped {len(caps)} CRITICAL finding(s) to HIGH"
+                   + (": " + "; ".join(f"{cid} ({c['keyword']})" for cid, c in caps) if caps else "")
+                   + ".")
+    if any("model_fallbacks" in r for r in done_runs):
+        out.append(f"- Model fallbacks (a call moved to the next model): "
+                   f"{sum(r.get('model_fallbacks', 0) for r in done_runs)}.")
+    if any("floor_raises" in r for r in done_runs):
+        out.append(f"- Pipeline re-anchored {sum(r.get('reanchored', 0) for r in done_runs)} finding(s) "
                    "to their snippet's lines.")
     out.append(f"- Strict scoring uses the agents' reported lines (primary). The *snippet* columns are secondary: "
                f"{n_anchored} of {n_findings} findings were re-anchored to where their snippet sits in the file; "
