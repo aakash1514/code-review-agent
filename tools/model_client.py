@@ -74,6 +74,34 @@ class ModelUnavailableError(Exception):
     pass
 
 
+class GroqDailyQuotaError(ModelUnavailableError):
+    """A Groq 429 from the daily quota (tokens or requests per day). Its
+    retry-after can be minutes (435 s seen), so it isn't waited out: the
+    caller moves on at once to the other Groq tier, whose quota is separate."""
+
+
+# Groq 429 bodies name the limit hit, e.g. "on tokens per day (TPD): Limit
+# 200000 ..."; per-minute limits say "tokens per minute (TPM)" / "(RPM)".
+_DAILY_LIMITS = {
+    "TPD": re.compile(r"tokens per day|\(TPD\)", re.IGNORECASE),
+    "RPD": re.compile(r"requests per day|\(RPD\)", re.IGNORECASE),
+}
+
+
+def _daily_limit(resp) -> str | None:
+    """"TPD" / "RPD" when a 429 comes from Groq's daily quota, else None
+    (a per-minute limit, which is worth waiting for). The body says which
+    limit was hit; failing that, x-ratelimit-remaining-requests is the
+    requests-per-day counter, so 0 there means the daily request quota."""
+    for name, pattern in _DAILY_LIMITS.items():
+        if pattern.search(resp.text or ""):
+            return name
+    headers = {k.lower(): v for k, v in resp.headers.items()}
+    if headers.get("x-ratelimit-remaining-requests", "").strip() == "0":
+        return "RPD"
+    return None
+
+
 class LLMCallCounter:
     def __init__(self):
         self.calls = 0
@@ -209,6 +237,11 @@ class FreeModelClient:
             )
             if resp.status_code == 429:
                 print(f"    [groq] 429 from {model}: {_rate_limit_details(resp)}")
+                daily = _daily_limit(resp)
+                if daily:
+                    print(f"    [groq] daily quota ({daily}) exhausted on {model}; not waiting "
+                          f"{resp.headers.get('retry-after', '?')}s, failing fast")
+                    raise GroqDailyQuotaError(f"Groq daily quota ({daily}) exhausted on {model}")
             if resp.status_code == 429 and attempt < max_retries:
                 wait = int(resp.headers.get("retry-after", 5 * (attempt + 1)))
                 print(f"    [groq] rate-limited on {model}, waiting {wait}s")
