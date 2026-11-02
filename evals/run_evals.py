@@ -161,6 +161,8 @@ def run_case(case: Case, context_mode: str, guardrail: tuple[str, str] | None = 
             "prompt_tokens": counter.prompt_tokens,
             "completion_tokens": counter.completion_tokens,
             "reasoning_tokens": counter.reasoning_tokens,
+            "cost_usd": round(counter.cost_usd, 6),
+            "pacing_wait_ms": counter.pacing_wait_ms,
             "should_block": gate["should_block"],
             "gate_description": gate["description"],
             "context": contexts,
@@ -177,6 +179,7 @@ def run_case(case: Case, context_mode: str, guardrail: tuple[str, str] | None = 
         sys.stdout = real_stdout
     log = tee.buffer_.getvalue()
     record["rate_limit_waits"] = log.count("[groq] rate-limited")
+    record["provider_fallbacks"] = log.count("[model_client] provider ")
     record["model_fallbacks"] = log.count("[model_client]")
     record["floor_raises"] = [{"from": m[0], "class": m[1], "title": m[2].strip().strip("'\"")}
                               for m in _FLOOR_LINE.findall(log)]
@@ -192,6 +195,25 @@ def _git(*args: str) -> str:
                               cwd=EVALS_DIR.parent).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
+
+
+def _llm_meta() -> dict:
+    """The LLM setup for meta.json: provider chain, and for Bedrock the model
+    and the task -> reasoning effort map actually in force."""
+    from config import settings
+    from tools import bedrock_llm
+    from tools.model_client import provider_chain
+
+    chain = provider_chain()
+    meta = {"provider_chain": chain}
+    if "bedrock" in chain:
+        models = {task: bedrock_llm.model_for(task) for task in bedrock_llm.TASK_ROUTING}
+        meta["bedrock"] = {
+            "models": models,
+            "efforts": {task: bedrock_llm.effort_for(model, task) for task, model in models.items()},
+            "max_rpm": {model: bedrock_llm.max_rpm(model) for model in sorted(set(models.values()))},
+        }
+    return meta
 
 
 def cmd_run(args) -> int:
@@ -225,6 +247,7 @@ def cmd_run(args) -> int:
             "git_sha": _git("rev-parse", "HEAD"),
             "git_dirty": bool(_git("status", "--porcelain", "--untracked-files=no")),
             "models": {"reasoning": settings.GROQ_MODEL_REASONING, "light": settings.GROQ_MODEL_LIGHT},
+            "llm": _llm_meta(),
             "flags": flags,
             **({"guardrail": {"id": guardrail[0], "version": guardrail[1]}} if guardrail else {}),
             "pause_seconds": args.pause,
@@ -296,6 +319,8 @@ def _fmt(value, kind: str) -> str:
         return f"{value / 1000:.1f}s"
     if kind == "int":
         return f"{value:,.0f}" if float(value).is_integer() else f"{value:,.1f}"
+    if kind == "usd":
+        return f"${value:.4f}"
     return f"{value:.2f}"
 
 
@@ -334,8 +359,16 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]],
     failed = sum(1 for _, cj in cases for r in cj["runs"] if r.get("harness_error"))
 
     out = [f"# Eval report: {run_dir.name}", ""]
+    llm = meta.get("llm") or {"provider_chain": ["groq"]}
+    if llm["provider_chain"][:1] == ["bedrock"]:
+        b = llm.get("bedrock", {})
+        per_task = b.get("models") or {t: b.get("model", "?") for t in (b.get("efforts") or {})}
+        models = "Bedrock " + ", ".join(f"{t}={per_task.get(t, '?')}@{e}" for t, e in (b.get("efforts") or {}).items())
+    else:
+        models = f"Groq {meta.get('models', {}).get('reasoning', '?')} / {meta.get('models', {}).get('light', '?')}"
+    fallback = " -> ".join(llm["provider_chain"])
     out.append(f"- Commit `{meta.get('git_sha', '?')[:10]}`{' (dirty)' if meta.get('git_dirty') else ''}, "
-               f"models {meta.get('models', {}).get('reasoning', '?')} / {meta.get('models', {}).get('light', '?')}")
+               f"models {models}; provider chain {fallback}")
     floor = {None: "n/a (before the floor existed)", True: "on", False: "OFF"}[flags.get("floor")]
     out.append(f"- Flags: context=`{flags.get('context')}`, severity cap {'on' if flags.get('severity_cap', True) else 'OFF'}, "
                f"security floor {floor}"
@@ -362,7 +395,12 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]],
                    + ".")
     if any("model_fallbacks" in r for r in done_runs):
         out.append(f"- Model fallbacks (a call moved to the next model): "
-                   f"{sum(r.get('model_fallbacks', 0) for r in done_runs)}.")
+                   f"{sum(r.get('model_fallbacks', 0) for r in done_runs)}"
+                   + (f", of which provider fallbacks: {sum(r.get('provider_fallbacks', 0) for r in done_runs)}"
+                      if any("provider_fallbacks" in r for r in done_runs) else "") + ".")
+    if any("pacing_wait_ms" in r for r in done_runs):
+        out.append(f"- Bedrock client-side pacing waits: "
+                   f"{sum(r.get('pacing_wait_ms', 0) for r in done_runs) / 1000:.0f}s in total.")
     if any("floor_raises" in r for r in done_runs):
         out.append(f"- Pipeline re-anchored {sum(r.get('reanchored', 0) for r in done_runs)} finding(s) "
                    "to their snippet's lines.")
@@ -405,6 +443,8 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]],
         ["Prompt tokens", _cell(agg, "ops.prompt_tokens_mean", "int")],
         ["Completion tokens (incl. reasoning)", _cell(agg, "ops.completion_tokens_mean", "int")],
         ["Reasoning tokens", _cell(agg, "ops.reasoning_tokens_mean", "int")],
+        ["LLM cost per case (USD)", _cell(agg, "ops.cost_usd_mean", "usd")],
+        ["LLM cost, whole run (USD)", _cell(agg, "ops.cost_usd_total", "usd")],
         ["Runs with an agent error", _cell(agg, "ops.runs_with_agent_errors", "int")],
     ])
 

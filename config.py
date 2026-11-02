@@ -45,6 +45,27 @@ class Settings:
     GITHUB_OAUTH_CLIENT_SECRET: str = _env("GITHUB_OAUTH_CLIENT_SECRET")
     GITHUB_OAUTH_REDIRECT_URI: str = _env("GITHUB_OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")
 
+    # LLM provider for the agents and synthesis: "groq" (default) or
+    # "bedrock", with LLM_FALLBACK ("groq" or "none") tried when it fails.
+    LLM_PROVIDER: str = _env("LLM_PROVIDER", "groq")
+    LLM_FALLBACK: str = _env("LLM_FALLBACK", "groq")
+    # Bedrock (Converse API) models by task tier, as on Groq. LIGHT "none" =
+    # use the reasoning model for light tasks too.
+    BEDROCK_LLM_MODEL_REASONING: str = _env("BEDROCK_LLM_MODEL_REASONING", "openai.gpt-oss-120b-1:0")
+    BEDROCK_LLM_MODEL_LIGHT: str = _env("BEDROCK_LLM_MODEL_LIGHT", "openai.gpt-oss-20b-1:0")
+    # One model for every task, overriding both, e.g. global.amazon.nova-2-lite-v1:0
+    # (Nova 2 Lite is reachable from ap-south-1 only through that global profile).
+    BEDROCK_LLM_MODEL: str = _env("BEDROCK_LLM_MODEL")
+    # Region to call; defaults to AWS_REGION.
+    BEDROCK_LLM_REGION: str = _env("BEDROCK_LLM_REGION")
+    # Client-side pacing override: a number for every model, or
+    # "model-id=rpm,...". Empty = per-model defaults at ~90% of the quota
+    # (gpt-oss 120b/20b 90, Nova 2 Lite 18; tools/bedrock_llm.py).
+    BEDROCK_LLM_MAX_RPM: str = _env("BEDROCK_LLM_MAX_RPM")
+    # Per-task reasoning effort override, e.g. "security:medium,architecture:low".
+    # Empty = the model family's built-in map in tools/bedrock_llm.py.
+    BEDROCK_REASONING_EFFORTS: str = _env("BEDROCK_REASONING_EFFORTS")
+
     # Groq (LLM reasoning, including synthesis)
     GROQ_API_KEY: str = _env("GROQ_API_KEY")
     # Heavy reasoning / synthesis calls (security, architecture).

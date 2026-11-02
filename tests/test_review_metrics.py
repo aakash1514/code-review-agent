@@ -20,7 +20,7 @@ def test_completed_review_with_a_blocking_finding():
                                  rate_limit_wait_ms=7000))
     assert _values(m) == {
         "ReviewsCompleted": 1, "ReviewsFailed": 0, "ReviewDurationMs": 12_000, "LLMCalls": 5,
-        "LLMTokens": 6500, "LLMFallbacks": 1, "RateLimitWaitMs": 7000,
+        "LLMTokens": 6500, "LLMFallbacks": 1, "RateLimitWaitMs": 7000, "LLMCostUSD": 0.0,
         "CriticalFindings": 2, "MergeBlocked": 1, "GuardrailBlocked": 0, "GuardrailErrors": 0,
     }
     assert m["ReviewDurationMs"][1] == "Milliseconds" and m["LLMTokens"][1] == "Count"

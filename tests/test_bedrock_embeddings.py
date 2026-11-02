@@ -7,8 +7,9 @@ from unittest.mock import MagicMock
 import pytest
 
 import rag.indexer
+from tools.rate_limit import RateLimiter
 from rag.embeddings import (
-    _RateLimiter, TITAN_MAX_CHARS, TITAN_MODEL, BedrockEmbedder, EmbeddingConfigError, EmbeddingDimensionError,
+    TITAN_MAX_CHARS, TITAN_MODEL, BedrockEmbedder, EmbeddingConfigError, EmbeddingDimensionError,
     HFApiEmbedder, LocalEmbedder, collection_name, get_embedder,
 )
 
@@ -166,35 +167,10 @@ class FakeClock:
         self.now += seconds
 
 
-def test_limiter_spaces_calls_evenly():
-    fake = FakeClock()
-    limiter = _RateLimiter(50, clock=fake.clock, sleep=fake.sleep)  # 1.2 s apart
-    for _ in range(4):
-        limiter.wait()
-    assert fake.slept == [1.2, 1.2, 1.2]  # the first call doesn't wait
-
-
-def test_limiter_doesnt_wait_when_calls_are_already_slow():
-    fake = FakeClock()
-    limiter = _RateLimiter(60, clock=fake.clock, sleep=fake.sleep)
-    limiter.wait()
-    fake.now += 5  # the caller spent 5 s elsewhere
-    limiter.wait()
-    assert fake.slept == []
-
-
-def test_limiter_off_when_zero():
-    fake = FakeClock()
-    limiter = _RateLimiter(0, clock=fake.clock, sleep=fake.sleep)
-    for _ in range(3):
-        limiter.wait()
-    assert fake.slept == []
-
-
 def test_embedder_paces_invoke_model_calls():
     fake = FakeClock()
     embedder = BedrockEmbedder(client=fake_bedrock(), max_rpm=50)
-    embedder._limiter = _RateLimiter(50, clock=fake.clock, sleep=fake.sleep)
+    embedder._limiter = RateLimiter(50, clock=fake.clock, sleep=fake.sleep)
     embedder.embed(["a", "b", "c"])
     assert fake.slept == [1.2, 1.2]
 

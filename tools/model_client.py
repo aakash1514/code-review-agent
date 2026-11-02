@@ -5,40 +5,53 @@ from contextvars import ContextVar
 
 import requests
 from config import settings
+from tools import bedrock_llm
+from tools.llm_routing import REASONING_TOKEN_ALLOWANCE, TASK_REASONING_EFFORT, TASK_ROUTING  # noqa: F401
 from tools.tracing import llm_inputs, record_llm_usage, traceable
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# Task -> primary Groq model. gap #7's fallback chain is now single-provider:
-# every task has a primary Groq model, and falls back to the OTHER Groq model
+# Task -> tier (reasoning | light) and per-task reasoning effort, shared with
+# the Bedrock provider (tools/llm_routing.py). On Groq every task has a
+# primary model by tier, and falls back to the OTHER Groq model
 # (reasoning <-> light) if the primary is rate-limited or erroring.
-# HF is no longer part of the reasoning path — Qwen2.5-Coder isn't hosted on
-# the free `hf-inference` serverless tier (confirmed via standalone test,
-# same failure mode as the nomic-embed-code issue in lesson #1). HF Inference
-# API is still used elsewhere in the project for embeddings (rag/indexer.py),
-# just not here.
-TASK_ROUTING = {
-    "security": "reasoning",
-    "architecture": "reasoning",
-    "synthesis": "reasoning",
-    "test_coverage": "light",
-    "documentation": "light",
+# USD per 1M tokens (input, output), matched on a fragment of the Bedrock
+# model id (dotted, so Groq's "openai/gpt-oss-120b" never matches). Reasoning
+# tokens are billed as output. Groq models are on the free tier, so they
+# cost 0, as does any model not listed here.
+# - gpt-oss: aws.amazon.com/bedrock/pricing, Standard tier, checked 2 Nov
+#   2026. AWS lists no Mumbai (ap-south-1) row for gpt-oss; these are the
+#   Asia Pacific (Sydney) rows, the nearest published APAC price.
+# - Nova 2 Lite: Amazon Bedrock on-demand price, about $0.30 / $2.50,
+#   checked 2 Nov 2026.
+LLM_PRICES_PER_MTOK = {
+    "openai.gpt-oss-120b": (0.1545, 0.6180),
+    "openai.gpt-oss-20b": (0.0721, 0.3090),
+    "amazon.nova-2-lite": (0.30, 2.50),
 }
 
 
-# gpt-oss models think before answering, and those reasoning tokens come out
-# of the same completion budget as the answer: with too small a budget the
-# model stops mid-thought (finish_reason "length") with empty content. So
-# each task gets a reasoning effort, and the request budget is the caller's
-# answer budget PLUS a reasoning allowance for that effort.
-TASK_REASONING_EFFORT = {
-    "security": "medium",
-    "architecture": "medium",
-    "synthesis": "medium",
-    "test_coverage": "low",
-    "documentation": "low",
-}
-REASONING_TOKEN_ALLOWANCE = {"low": 2048, "medium": 6144, "high": 12288}
+def llm_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    for fragment, (per_in, per_out) in LLM_PRICES_PER_MTOK.items():
+        if fragment in model:
+            return (prompt_tokens * per_in + completion_tokens * per_out) / 1_000_000
+    return 0.0
+
+
+PROVIDERS = ("groq", "bedrock")
+
+
+def provider_chain() -> list[str]:
+    """[LLM_PROVIDER, LLM_FALLBACK], deduplicated; "none" = no fallback."""
+    chain = []
+    for name in (getattr(settings, "LLM_PROVIDER", "") or "groq", getattr(settings, "LLM_FALLBACK", "") or "groq"):
+        name = name.strip().lower()
+        if name == "none" or name in chain:
+            continue
+        if name not in PROVIDERS:
+            raise ValueError(f"unknown LLM provider {name!r}; use one of {PROVIDERS} (or none as fallback)")
+        chain.append(name)
+    return chain
 
 
 def _is_gpt_oss(model: str) -> bool:
@@ -69,10 +82,15 @@ class LLMCallCounter:
         self.prompt_tokens = 0
         self.completion_tokens = 0  # includes reasoning_tokens
         self.reasoning_tokens = 0
-        # Times reason() had to move a task to its other Groq tier.
+        # Times reason() moved a task on: to the other Groq tier, or to the
+        # fallback provider.
         self.fallbacks = 0
         # Time spent sleeping on 429 retry-after waits.
         self.rate_limit_wait_ms = 0
+        # Time spent in client-side pacing before Bedrock calls.
+        self.pacing_wait_ms = 0
+        # From LLM_PRICES_PER_MTOK; 0 for free-tier Groq.
+        self.cost_usd = 0.0
 
 
 _call_counter: ContextVar[LLMCallCounter | None] = ContextVar("llm_call_counter", default=None)
@@ -101,14 +119,36 @@ class IncompleteResponseError(Exception):
 class FreeModelClient:
     def reason(self, system: str, user: str, task: str, max_tokens: int = 2000) -> str:
         """
-        Routes a (system, user) prompt pair to a Groq model based on task type,
-        with one automatic fallback hop to the other Groq model if the primary
-        fails. Returns raw text content — callers (agents) are responsible for
-        parsing/validating JSON out of it, since Groq's JSON mode is less
-        strict than Anthropic's and needs parse-with-retry at the call site.
+        Sends a (system, user) prompt pair to each provider in
+        provider_chain() until one answers: LLM_PROVIDER, then LLM_FALLBACK.
+        Returns raw text content — callers (agents) are responsible for
+        parsing/validating JSON out of it, and retry on a parse failure.
         max_tokens is the budget for the answer itself; reasoning models get
-        their reasoning allowance on top (see TASK_REASONING_EFFORT).
+        their reasoning allowance on top. Raises ModelUnavailableError only
+        when every provider has failed.
         """
+        chain = provider_chain()
+        last_error = None
+        for i, provider in enumerate(chain):
+            if i > 0:
+                counter = _call_counter.get()
+                if counter is not None:
+                    counter.fallbacks += 1
+                print(f"    [model_client] provider {chain[i - 1]} failed for task={task}: "
+                      f"{type(last_error).__name__}: {last_error} — trying {provider}")
+            try:
+                if provider == "bedrock":
+                    return self._call_bedrock(system, user, bedrock_llm.model_for(task), max_tokens, task)
+                return self._reason_groq(system, user, task, max_tokens)
+            except Exception as e:
+                last_error = e
+        if len(chain) == 1 and isinstance(last_error, ModelUnavailableError):
+            raise last_error  # Groq alone: its own error, as before
+        raise ModelUnavailableError(f"All LLM providers failed for task={task} ({', '.join(chain)})") from last_error
+
+    def _reason_groq(self, system: str, user: str, task: str, max_tokens: int) -> str:
+        """A Groq model by task type, with one fallback hop to the other Groq
+        model (reasoning <-> light) if the primary fails."""
         primary = TASK_ROUTING.get(task, "reasoning")
         secondary = "light" if primary == "reasoning" else "reasoning"
 
@@ -187,6 +227,7 @@ class FreeModelClient:
                 counter.prompt_tokens += usage.get("prompt_tokens", 0)
                 counter.completion_tokens += completion_tokens
                 counter.reasoning_tokens += reasoning_tokens
+                counter.cost_usd += llm_cost_usd(model, usage.get("prompt_tokens", 0), completion_tokens)
             record_llm_usage("groq", model, usage, finish_reason)
             print(f"    [groq] task={task} model={model} effort={effort or '-'} finish={finish_reason} "
                   f"tokens: prompt={usage.get('prompt_tokens', '?')} reasoning={reasoning_tokens} "
@@ -201,6 +242,49 @@ class FreeModelClient:
             return content
 
         raise ModelUnavailableError(f"Groq rate-limited after {max_retries} retries on {model}")
+
+    # One LLM run per Bedrock call in the LangSmith trace (botocore's own
+    # retries happen inside it).
+    @traceable(run_type="llm", name="bedrock", process_inputs=llm_inputs)
+    def _call_bedrock(self, system: str, user: str, model: str, max_tokens: int, task: str) -> str:
+        """One Converse call, paced by this model's own limiter. Throttling
+        and transient errors are retried by botocore (adaptive); whatever
+        still fails raises, so reason() can fall back to the next provider."""
+        effort = bedrock_llm.effort_for(model, task)
+        counter = _call_counter.get()
+        slept = bedrock_llm.get_limiter(model).wait()
+        if counter is not None:
+            counter.pacing_wait_ms += int(slept * 1000)
+            counter.calls += 1
+        started = time.monotonic()
+        response = bedrock_llm.get_client().converse(
+            modelId=model,
+            system=[{"text": system}],
+            messages=[{"role": "user", "content": [{"text": user}]}],
+            # temperature is accepted together with reasoning by Nova 2 Lite
+            # and gpt-oss (checked live, 2 Nov).
+            inferenceConfig={"maxTokens": max_tokens + REASONING_TOKEN_ALLOWANCE[effort], "temperature": 0.2},
+            additionalModelRequestFields=bedrock_llm.reasoning_fields(model, effort),
+        )
+        stop_reason = response.get("stopReason")
+        usage = response.get("usage") or {}
+        prompt_tokens, completion_tokens = usage.get("inputTokens", 0), usage.get("outputTokens", 0)
+        if counter is not None:
+            counter.prompt_tokens += prompt_tokens
+            counter.completion_tokens += completion_tokens  # reasoning included; not reported separately
+            counter.cost_usd += llm_cost_usd(model, prompt_tokens, completion_tokens)
+        record_llm_usage("amazon_bedrock", model, usage, stop_reason)
+        print(f"    [bedrock] task={task} model={model} effort={effort} stop={stop_reason} "
+              f"tokens: prompt={prompt_tokens} output={completion_tokens} "
+              f"({time.monotonic() - started:.1f}s" + (f", paced {slept:.1f}s" if slept >= 0.05 else "") + ")")
+
+        text = bedrock_llm.answer_text(response)
+        if stop_reason == "max_tokens":
+            raise IncompleteResponseError(
+                f"{model} hit the token limit (stopReason=max_tokens, {completion_tokens} output tokens)")
+        if not text.strip():
+            raise IncompleteResponseError(f"{model} returned no text (stopReason={stop_reason})")
+        return text
 
 
 model_client = FreeModelClient()

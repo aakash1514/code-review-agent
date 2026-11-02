@@ -265,6 +265,7 @@ def _review_metrics(job: dict, outcome: dict | None, duration_ms: int, llm_calls
         "LLMTokens": (llm_calls.prompt_tokens + llm_calls.completion_tokens, "Count"),
         "LLMFallbacks": (llm_calls.fallbacks, "Count"),
         "RateLimitWaitMs": (llm_calls.rate_limit_wait_ms, "Milliseconds"),
+        "LLMCostUSD": (round(llm_calls.cost_usd, 6), "None"),
         "GuardrailBlocked": ((outcome or {}).get("guardrail_blocked", 0), "Count"),
         "GuardrailErrors": ((outcome or {}).get("guardrail_errors", 0), "Count"),
     }

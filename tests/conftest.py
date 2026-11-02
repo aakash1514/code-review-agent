@@ -39,6 +39,14 @@ class FakeSettings:
     DATABASE_URL = "sqlite:///./should-be-replaced-per-test.db"
     GUARDRAIL_ID = ""  # prompt-injection screen off unless a test turns it on
     GUARDRAIL_VERSION = "1"
+    LLM_PROVIDER = "groq"  # Bedrock only when a test turns it on
+    LLM_FALLBACK = "groq"
+    BEDROCK_LLM_MODEL_REASONING = "openai.gpt-oss-120b-1:0"
+    BEDROCK_LLM_MODEL_LIGHT = "openai.gpt-oss-20b-1:0"
+    BEDROCK_LLM_MODEL = ""
+    BEDROCK_LLM_REGION = ""
+    BEDROCK_LLM_MAX_RPM = ""
+    BEDROCK_REASONING_EFFORTS = ""
 
 
 _fake_config = types.ModuleType("config")
