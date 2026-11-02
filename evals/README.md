@@ -121,6 +121,64 @@ finding and no agent review. It's **off by default**, so `run` results stay
 comparable with the v1/v2 runs, which had no screen. Without the screen, the
 `inj-*` cases measure how well the agents' own prompt instructions hold up.
 
+## CI eval gate
+
+The `Eval gate` job in `.github/workflows/ci.yml` runs on every pull request
+(never on pushes to `main`), so it can be a required check.
+
+**What triggers the eval.** The job first diffs the PR against its base. If
+nothing under `agents/`, `pipeline/`, `rag/`, `evals/`, `models/`,
+`tools/model_client.py`, `tools/bedrock_llm.py`, `tools/prompt_boundaries.py`,
+`tools/code_tools.py`, `config.py` or `requirements.txt` changed, it passes in
+seconds with "skipped: no review-quality paths changed" in the job summary.
+Otherwise it runs, as production does but without the fallback:
+
+```bash
+LLM_PROVIDER=bedrock LLM_FALLBACK=none python -m evals.run_evals run --cases smoke --context kg --out evals/runs/ci
+python -m evals.run_evals gate evals/runs/ci
+```
+
+8 cases on Bedrock gpt-oss, about $0.01 and 1–2 minutes plus the 10 s pauses
+between cases. AWS access is OIDC into the `evals` GitHub environment, role
+`cra-gha-evals`, which can only call `bedrock:InvokeModel` on gpt-oss 120b and
+20b in ap-south-1. No Groq key, Qdrant, GitHub token or guardrail is involved:
+`--context kg` builds the knowledge graph from the case files.
+
+**The gate.** `gate` re-scores the run with no LLM calls (strict scoring, as in
+`score`) and checks five rules from `evals/thresholds.yaml`. Each threshold's
+comment there gives its reason and the baseline, from `smoke-delims`
+(Bedrock gpt-oss, random delimiters):
+
+| Rule | Threshold | Baseline | Why |
+|---|---|---|---|
+| False blocks | ≤ 0 | 0 | A false block stops a good PR from merging. |
+| Block recall | ≥ 0.50 | 0.50 | `sec-01`'s SQL injection must still block; `arch-05` is always missed (KNOWN_ISSUES #8). |
+| Recall (strict, all categories) | ≥ 0.60 | 0.71 | Room for one run's line-number noise on 7 issues. |
+| False-CRITICAL rate | ≤ 0.25 | 0.0 | 0.0 when there are no CRITICAL findings. |
+| Runs with an agent error | ≤ 1 | 0 | One transient error is tolerated. |
+
+It also fails when a smoke case has no result, or only a run that crashed in
+the harness (the run stopped partway). Exit codes: 0 pass, 1 fail, 2 bad
+thresholds file. Change a threshold only together with a new baseline run, and
+say which in the comment.
+
+**Reading the result.** The job summary shows `gate.md`: the verdict, the rule
+table (rule | actual | threshold | pass/fail), and the full score report
+folded under it (per category, blocking, per case, unmatched findings). The
+whole run directory (case JSONs, per-case logs, `meta.json`, `gate.md`) is
+uploaded as the artifact `eval-gate-pr<N>-attempt<K>` for 14 days. To check a
+run locally, download it and run `gate` or `score --md` on it.
+
+**Re-running.** There's one run per gate, no retries. LLM output varies run to
+run, so if a rule fails and the per-case table doesn't point at your change,
+re-run the job ("Re-run failed jobs"). A second failure is probably real.
+
+**Fork PRs.** GitHub gives fork PRs no OIDC token, so the eval can't run. If a
+fork PR touches review-quality paths, the job **fails** with "eval gate needs a
+maintainer run for fork PRs" instead of passing silently. A maintainer then
+runs the commands above locally (or from a branch in this repo) and posts the
+gate table.
+
 ## Severity policy
 
 The HITL gate blocks a PR only on a CRITICAL finding, so two deterministic rules
