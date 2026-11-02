@@ -142,6 +142,15 @@ def test_ops_metrics():
     assert m["ops.latency_ms_p95"] == 4000
     assert m["ops.llm_calls_mean"] == 4
     assert m["ops.runs_with_agent_errors"] == 1
+    assert m["ops.cost_usd_mean"] is None and m["ops.cost_usd_total"] is None  # runs without cost_usd
+
+
+def test_cost_metrics_use_runs_that_recorded_cost():
+    runs = [_run([]), _run([]), _run([])]
+    runs[0]["cost_usd"], runs[1]["cost_usd"] = 0.01, 0.03  # runs[2] predates cost tracking
+    m = scoring.compute_metrics([(_labels(), r) for r in runs])
+    assert m["ops.cost_usd_mean"] == pytest.approx(0.02)
+    assert m["ops.cost_usd_total"] == pytest.approx(0.04)
 
 
 def test_repeats_are_split_and_aggregated_to_mean_and_range():

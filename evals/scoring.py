@@ -136,6 +136,7 @@ def compute_metrics(results: list[tuple[dict, dict]]) -> dict:
     block_correct = false_blocks = missed_blocks = blocks = expected_blocks = caught_blocks = 0
     runs_with_agent_errors = 0
     latencies, calls, prompt_toks, completion_toks, reasoning_toks = [], [], [], [], []
+    costs = []  # only runs that recorded cost_usd (older runs didn't)
 
     for labels, run in results:
         findings = run["findings"]
@@ -188,6 +189,8 @@ def compute_metrics(results: list[tuple[dict, dict]]) -> dict:
         prompt_toks.append(run["prompt_tokens"])
         completion_toks.append(run["completion_tokens"])
         reasoning_toks.append(run["reasoning_tokens"])
+        if run.get("cost_usd") is not None:
+            costs.append(run["cost_usd"])
 
     totals = {k: sum(per_cat[c][k] for c in CATEGORIES) for k in per_cat[CATEGORIES[0]]}
     for name, d in [*per_cat.items(), ("ALL", totals)]:
@@ -217,6 +220,8 @@ def compute_metrics(results: list[tuple[dict, dict]]) -> dict:
     m["ops.prompt_tokens_mean"] = mean(prompt_toks) if prompt_toks else None
     m["ops.completion_tokens_mean"] = mean(completion_toks) if completion_toks else None
     m["ops.reasoning_tokens_mean"] = mean(reasoning_toks) if reasoning_toks else None
+    m["ops.cost_usd_mean"] = mean(costs) if costs else None
+    m["ops.cost_usd_total"] = sum(costs) if costs else None
     return m
 
 
