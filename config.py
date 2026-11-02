@@ -45,6 +45,21 @@ class Settings:
     GITHUB_OAUTH_CLIENT_SECRET: str = _env("GITHUB_OAUTH_CLIENT_SECRET")
     GITHUB_OAUTH_REDIRECT_URI: str = _env("GITHUB_OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")
 
+    # LLM provider for the agents and synthesis: "groq" (default) or
+    # "bedrock", with LLM_FALLBACK ("groq" or "none") tried when it fails.
+    LLM_PROVIDER: str = _env("LLM_PROVIDER", "groq")
+    LLM_FALLBACK: str = _env("LLM_FALLBACK", "groq")
+    # Bedrock (Converse API). Nova 2 Lite is reachable from ap-south-1 only
+    # through the global inference profile.
+    BEDROCK_LLM_MODEL: str = _env("BEDROCK_LLM_MODEL", "global.amazon.nova-2-lite-v1:0")
+    # Region to call; defaults to AWS_REGION.
+    BEDROCK_LLM_REGION: str = _env("BEDROCK_LLM_REGION")
+    # Client-side pacing below the account's Nova 2 Lite quota (20 requests/min).
+    BEDROCK_LLM_MAX_RPM: str = _env("BEDROCK_LLM_MAX_RPM", "18")
+    # Per-task reasoning effort override, e.g. "security:medium,architecture:low".
+    # Empty = the built-in map in tools/bedrock_llm.py.
+    BEDROCK_REASONING_EFFORTS: str = _env("BEDROCK_REASONING_EFFORTS")
+
     # Groq (LLM reasoning, including synthesis)
     GROQ_API_KEY: str = _env("GROQ_API_KEY")
     # Heavy reasoning / synthesis calls (security, architecture).

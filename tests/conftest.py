@@ -39,6 +39,12 @@ class FakeSettings:
     DATABASE_URL = "sqlite:///./should-be-replaced-per-test.db"
     GUARDRAIL_ID = ""  # prompt-injection screen off unless a test turns it on
     GUARDRAIL_VERSION = "1"
+    LLM_PROVIDER = "groq"  # Bedrock only when a test turns it on
+    LLM_FALLBACK = "groq"
+    BEDROCK_LLM_MODEL = "global.amazon.nova-2-lite-v1:0"
+    BEDROCK_LLM_REGION = ""
+    BEDROCK_LLM_MAX_RPM = "18"
+    BEDROCK_REASONING_EFFORTS = ""
 
 
 _fake_config = types.ModuleType("config")
