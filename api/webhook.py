@@ -1,4 +1,4 @@
-import hashlib, hmac, json, time, traceback
+import asyncio, hashlib, hmac, json, time, traceback
 from tools.logs import configure_logging, log_context, log_event
 
 # First, so every later line (imports included) is formatted as LOG_FORMAT says.
@@ -20,6 +20,7 @@ from tools.model_client import count_llm_calls
 from tools.tracing import traceable
 from pipeline.synthesizer import build_review_report, synthesize_markdown
 from pipeline.hitl_gate import evaluate_hitl_gate, DEFAULT_STATUS_CONTEXT
+from pipeline.guardrail import drop_files_from_diff, guardrail_enabled, prompt_injection_finding, screen_patch
 from tools.github_tools import get_installation_token, get_pr_diff, get_pr_files, post_pr_review, set_commit_status
 from tools.code_tools import extract_functions, strip_diff_to_source
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
@@ -252,7 +253,8 @@ def _review_metrics(job: dict, outcome: dict | None, duration_ms: int, llm_calls
     """CloudWatch metrics for one finished review (see tools/logs.py, EMF).
     A review discarded because a newer commit arrived is neither completed
     nor failed. CriticalFindings/MergeBlocked exist only when the review got
-    as far as the gate."""
+    as far as the gate. GuardrailBlocked/GuardrailErrors are always there
+    (0 when screening is off or the review failed first)."""
     status = job.get("status")
     superseded = status == "failed" and "superseded" in (job.get("error") or "")
     metrics = {
@@ -263,6 +265,8 @@ def _review_metrics(job: dict, outcome: dict | None, duration_ms: int, llm_calls
         "LLMTokens": (llm_calls.prompt_tokens + llm_calls.completion_tokens, "Count"),
         "LLMFallbacks": (llm_calls.fallbacks, "Count"),
         "RateLimitWaitMs": (llm_calls.rate_limit_wait_ms, "Milliseconds"),
+        "GuardrailBlocked": ((outcome or {}).get("guardrail_blocked", 0), "Count"),
+        "GuardrailErrors": ((outcome or {}).get("guardrail_errors", 0), "Count"),
     }
     if outcome is not None:
         metrics["CriticalFindings"] = (outcome["critical_findings"], "Count")
@@ -293,6 +297,8 @@ async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> di
         retriever = _load_retriever(repo)
         all_agent_reports = []
         vector_errors: list[str] = []  # distinct reasons, in order seen
+        guardrail_errors: list[str] = []  # one per errored screen call
+        quarantined: list[str] = []  # files the guardrail flagged
 
         async def _on_agent_complete(report: AgentReport) -> None:
             await manager.broadcast(repo, {
@@ -316,6 +322,22 @@ async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> di
             patch = target.patch
             changed_file = target.filename
             await manager.broadcast(repo, {"commit_sha": commit_sha, "stage": "file_started", "file": changed_file})
+            # Prompt-injection screen, before any LLM sees the patch. A flagged
+            # file is quarantined: no retrieval, no agents, no synthesis; its
+            # CRITICAL finding blocks the merge. On error, review it anyway
+            # (fail-open) and say so on the review.
+            if guardrail_enabled():
+                screen = await asyncio.to_thread(screen_patch, changed_file, patch)
+                if screen.blocked:
+                    quarantined.append(changed_file)
+                    report = AgentReport(agent_name="guardrail", summary=f"quarantined: {screen.detail}",
+                                         findings=[prompt_injection_finding(changed_file, patch, screen.detail)])
+                    all_agent_reports.append(report)
+                    await _on_agent_complete(report)
+                    print(f"[webhook] guardrail quarantined {changed_file}: {screen.detail}")
+                    continue
+                if screen.error:
+                    guardrail_errors.append(screen.error)
             changed_fn_names = [fn.name for fn in extract_functions(strip_diff_to_source(patch))]
             context = retriever.retrieve_for_diff(
                 repo=repo,
@@ -340,6 +362,7 @@ async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> di
             pr_number=pr_number, repo=repo, commit_sha=commit_sha, agent_reports=all_agent_reports,
         )
         review.warnings = [f"vector context unavailable: {reason}" for reason in vector_errors]
+        review.warnings += [f"guardrail unavailable: {reason}" for reason in dict.fromkeys(guardrail_errors)]
         review.skipped_files = [{"filename": s.filename, "reason": s.reason} for s in plan.skipped]
 
         # Fix 5.1: generate markdown FIRST, attach it to the review object,
@@ -350,6 +373,8 @@ async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> di
             full_diff = get_pr_diff(repo, pr_number, token)
         except Exception:
             full_diff = None
+        if full_diff and quarantined:
+            full_diff = drop_files_from_diff(full_diff, quarantined)
         markdown = synthesize_markdown(review, diff_snippet=full_diff)
         review.synthesized_review = markdown
         review.status = "complete"
@@ -372,7 +397,8 @@ async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> di
         await manager.broadcast(repo, {
             "commit_sha": commit_sha, "stage": "complete", "should_block": gate["should_block"],
         })
-        return {"critical_findings": review.critical_count, "merge_blocked": gate["should_block"]}
+        return {"critical_findings": review.critical_count, "merge_blocked": gate["should_block"],
+                "guardrail_blocked": len(quarantined), "guardrail_errors": len(guardrail_errors)}
 
     except Exception as e:
         traceback.print_exc()

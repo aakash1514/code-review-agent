@@ -21,7 +21,7 @@ def test_completed_review_with_a_blocking_finding():
     assert _values(m) == {
         "ReviewsCompleted": 1, "ReviewsFailed": 0, "ReviewDurationMs": 12_000, "LLMCalls": 5,
         "LLMTokens": 6500, "LLMFallbacks": 1, "RateLimitWaitMs": 7000,
-        "CriticalFindings": 2, "MergeBlocked": 1,
+        "CriticalFindings": 2, "MergeBlocked": 1, "GuardrailBlocked": 0, "GuardrailErrors": 0,
     }
     assert m["ReviewDurationMs"][1] == "Milliseconds" and m["LLMTokens"][1] == "Count"
 
@@ -31,6 +31,13 @@ def test_failed_review_has_no_gate_metrics():
     v = _values(m)
     assert v["ReviewsFailed"] == 1 and v["ReviewsCompleted"] == 0
     assert "CriticalFindings" not in v and "MergeBlocked" not in v
+    assert v["GuardrailBlocked"] == 0 and v["GuardrailErrors"] == 0
+
+
+def test_guardrail_counts_come_from_the_outcome():
+    outcome = {"critical_findings": 1, "merge_blocked": True, "guardrail_blocked": 1, "guardrail_errors": 2}
+    v = _values(_review_metrics({"status": "complete"}, outcome, 100, _counter()))
+    assert v["GuardrailBlocked"] == 1 and v["GuardrailErrors"] == 2
 
 
 def test_interrupted_review_counts_as_failed():
