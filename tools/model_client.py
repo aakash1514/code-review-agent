@@ -6,48 +6,28 @@ from contextvars import ContextVar
 import requests
 from config import settings
 from tools import bedrock_llm
+from tools.llm_routing import REASONING_TOKEN_ALLOWANCE, TASK_REASONING_EFFORT, TASK_ROUTING  # noqa: F401
 from tools.tracing import llm_inputs, record_llm_usage, traceable
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# Task -> primary Groq model. gap #7's fallback chain is now single-provider:
-# every task has a primary Groq model, and falls back to the OTHER Groq model
+# Task -> tier (reasoning | light) and per-task reasoning effort, shared with
+# the Bedrock provider (tools/llm_routing.py). On Groq every task has a
+# primary model by tier, and falls back to the OTHER Groq model
 # (reasoning <-> light) if the primary is rate-limited or erroring.
-# HF is no longer part of the reasoning path — Qwen2.5-Coder isn't hosted on
-# the free `hf-inference` serverless tier (confirmed via standalone test,
-# same failure mode as the nomic-embed-code issue in lesson #1). HF Inference
-# API is still used elsewhere in the project for embeddings (rag/indexer.py),
-# just not here.
-TASK_ROUTING = {
-    "security": "reasoning",
-    "architecture": "reasoning",
-    "synthesis": "reasoning",
-    "test_coverage": "light",
-    "documentation": "light",
-}
-
-
-# gpt-oss models think before answering, and those reasoning tokens come out
-# of the same completion budget as the answer: with too small a budget the
-# model stops mid-thought (finish_reason "length") with empty content. So
-# each task gets a reasoning effort, and the request budget is the caller's
-# answer budget PLUS a reasoning allowance for that effort.
-TASK_REASONING_EFFORT = {
-    "security": "medium",
-    "architecture": "medium",
-    "synthesis": "medium",
-    "test_coverage": "low",
-    "documentation": "low",
-}
-REASONING_TOKEN_ALLOWANCE = {"low": 2048, "medium": 6144, "high": 12288}
-
-
-# USD per 1M tokens (input, output), matched on a fragment of the model id.
-# Nova 2 Lite: Amazon Bedrock on-demand pricing, checked 2 Nov 2026 (about
-# $0.30 in / $2.50 out; reasoning tokens are billed as output). Groq models
-# are on the free tier, so they cost 0, as does any model not listed here.
+# USD per 1M tokens (input, output), matched on a fragment of the Bedrock
+# model id (dotted, so Groq's "openai/gpt-oss-120b" never matches). Reasoning
+# tokens are billed as output. Groq models are on the free tier, so they
+# cost 0, as does any model not listed here.
+# - gpt-oss: aws.amazon.com/bedrock/pricing, Standard tier, checked 2 Nov
+#   2026. AWS lists no Mumbai (ap-south-1) row for gpt-oss; these are the
+#   Asia Pacific (Sydney) rows, the nearest published APAC price.
+# - Nova 2 Lite: Amazon Bedrock on-demand price, about $0.30 / $2.50,
+#   checked 2 Nov 2026.
 LLM_PRICES_PER_MTOK = {
-    "nova-2-lite": (0.30, 2.50),
+    "openai.gpt-oss-120b": (0.1545, 0.6180),
+    "openai.gpt-oss-20b": (0.0721, 0.3090),
+    "amazon.nova-2-lite": (0.30, 2.50),
 }
 
 
@@ -158,7 +138,7 @@ class FreeModelClient:
                       f"{type(last_error).__name__}: {last_error} — trying {provider}")
             try:
                 if provider == "bedrock":
-                    return self._call_bedrock(system, user, bedrock_llm.model_id(), max_tokens, task)
+                    return self._call_bedrock(system, user, bedrock_llm.model_for(task), max_tokens, task)
                 return self._reason_groq(system, user, task, max_tokens)
             except Exception as e:
                 last_error = e
@@ -267,12 +247,12 @@ class FreeModelClient:
     # retries happen inside it).
     @traceable(run_type="llm", name="bedrock", process_inputs=llm_inputs)
     def _call_bedrock(self, system: str, user: str, model: str, max_tokens: int, task: str) -> str:
-        """One Converse call, paced by the LLM's own limiter. Throttling and
-        transient errors are retried by botocore (adaptive); whatever still
-        fails raises, so reason() can fall back to the next provider."""
-        effort = bedrock_llm.effort_for(task)
+        """One Converse call, paced by this model's own limiter. Throttling
+        and transient errors are retried by botocore (adaptive); whatever
+        still fails raises, so reason() can fall back to the next provider."""
+        effort = bedrock_llm.effort_for(model, task)
         counter = _call_counter.get()
-        slept = bedrock_llm.get_limiter().wait()
+        slept = bedrock_llm.get_limiter(model).wait()
         if counter is not None:
             counter.pacing_wait_ms += int(slept * 1000)
             counter.calls += 1
@@ -281,10 +261,10 @@ class FreeModelClient:
             modelId=model,
             system=[{"text": system}],
             messages=[{"role": "user", "content": [{"text": user}]}],
-            # temperature is accepted together with reasoning (checked live, 2 Nov).
-            inferenceConfig={"maxTokens": max_tokens + bedrock_llm.REASONING_TOKEN_ALLOWANCE[effort],
-                             "temperature": 0.2},
-            additionalModelRequestFields={"reasoningConfig": {"type": "enabled", "maxReasoningEffort": effort}},
+            # temperature is accepted together with reasoning by Nova 2 Lite
+            # and gpt-oss (checked live, 2 Nov).
+            inferenceConfig={"maxTokens": max_tokens + REASONING_TOKEN_ALLOWANCE[effort], "temperature": 0.2},
+            additionalModelRequestFields=bedrock_llm.reasoning_fields(model, effort),
         )
         stop_reason = response.get("stopReason")
         usage = response.get("usage") or {}
