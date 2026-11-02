@@ -4,6 +4,7 @@
                                 [--no-severity-cap] [--no-floor] [--guardrail] [--repeat N] [--pause S]
                                 [--out evals/runs/<name>]
   python -m evals.run_evals score <run_dir> [--md]
+  python -m evals.run_evals gate <run_dir> [--thresholds evals/thresholds.yaml] [--cases smoke]
   python -m evals.run_evals guardrail [--cases all|smoke|id1,id2] [--out evals/runs/<name>]
                                       [--guardrail-id ID] [--guardrail-version V]
 
@@ -17,6 +18,10 @@ when started again with the same --out and flags.
 
 `score` re-scores a run directory against the current labels with no LLM
 calls (see evals/scoring.py).
+
+`gate` scores a run the same way and checks it against evals/thresholds.yaml
+(the CI eval gate): prints a rule table, writes <run_dir>/gate.md, and exits
+1 when a rule fails or a case is missing from the run.
 
 `guardrail` sends each case's patch through the Bedrock Guardrails
 prompt-injection screen only (pipeline/guardrail.py): no agents, no LLM.
@@ -503,6 +508,134 @@ def cmd_score(args) -> int:
     return 0
 
 
+# --- gate ----------------------------------------------------------------------
+
+THRESHOLDS_FILE = EVALS_DIR / "thresholds.yaml"
+
+# threshold key -> (rule name, metric key in gate_metrics, "max" | "min", kind)
+GATE_RULES = {
+    "false_blocks_max": ("False blocks", "false_blocks", "max", "count"),
+    "block_recall_min": ("Block recall", "block_recall", "min", "rate"),
+    "recall_min": ("Recall (strict, all categories)", "recall", "min", "rate"),
+    "false_critical_rate_max": ("False-CRITICAL rate", "false_critical_rate", "max", "rate"),
+    "agent_error_runs_max": ("Runs with an agent error", "agent_error_runs", "max", "count"),
+}
+
+
+class GateConfigError(ValueError):
+    pass
+
+
+def load_thresholds(path: Path) -> dict[str, float]:
+    """The gate thresholds: every key of GATE_RULES, nothing else; rates are
+    numbers in [0, 1], counts non-negative integers."""
+    import yaml
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as e:
+        raise GateConfigError(f"can't read thresholds {path}: {e}") from e
+    if not isinstance(data, dict):
+        raise GateConfigError(f"{path}: expected a mapping of threshold -> value")
+    problems = [f"missing {k}" for k in GATE_RULES if k not in data]
+    problems += [f"unknown key {k}" for k in data if k not in GATE_RULES]
+    for key, value in data.items():
+        if key not in GATE_RULES:
+            continue
+        kind = GATE_RULES[key][3]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            problems.append(f"{key} must be a number, got {value!r}")
+        elif kind == "rate" and not 0 <= value <= 1:
+            problems.append(f"{key} must be between 0 and 1, got {value}")
+        elif kind == "count" and (value < 0 or not float(value).is_integer()):
+            problems.append(f"{key} must be a non-negative integer, got {value}")
+    if problems:
+        raise GateConfigError(f"{path}: " + "; ".join(problems))
+    return data
+
+
+def gate_metrics(cases: list[tuple[dict, dict]]) -> dict:
+    """The gated metrics over every completed run of the cases (strict
+    scoring, as in the report). None = undefined (no expected-block case, or
+    no labelled issue); the false-CRITICAL rate is 0.0 with no CRITICALs."""
+    runs = [(labels, r) for labels, cj in cases for r in cj["runs"] if not r.get("harness_error")]
+    m = scoring.compute_metrics(runs)
+    return {
+        "false_blocks": m["block.false_blocks"],
+        "block_recall": m["block.recall"],
+        "recall": m["ALL.recall"],
+        "false_critical_rate": m["critical.false_rate"] or 0.0,
+        "agent_error_runs": m["ops.runs_with_agent_errors"],
+    }
+
+
+def evaluate_gate(metrics: dict, thresholds: dict) -> list[dict]:
+    """One row per rule: name, actual, threshold, op, passed. An undefined
+    metric fails its rule."""
+    rows = []
+    for key, (name, metric, op, kind) in GATE_RULES.items():
+        actual, limit = metrics[metric], thresholds[key]
+        passed = actual is not None and (actual <= limit if op == "max" else actual >= limit)
+        rows.append({"rule": name, "actual": actual, "threshold": limit, "op": op, "kind": kind, "passed": passed})
+    return rows
+
+
+def render_gate_table(rows: list[dict]) -> list[str]:
+    def fmt(value, kind):
+        if value is None:
+            return "n/a"
+        return f"{value:.2f}" if kind == "rate" else f"{value:g}"
+
+    return _table(["Rule", "Actual", "Threshold", "Result"], [
+        [r["rule"], fmt(r["actual"], r["kind"]), ("<= " if r["op"] == "max" else ">= ") + fmt(r["threshold"], r["kind"]),
+         "pass" if r["passed"] else "**FAIL**"]
+        for r in rows])
+
+
+def cmd_gate(args) -> int:
+    run_dir = Path(args.run_dir)
+    try:
+        thresholds = load_thresholds(Path(args.thresholds))
+    except GateConfigError as e:
+        print(f"eval gate: bad thresholds file: {e}")
+        return 2
+    if not run_dir.is_dir():
+        print(f"eval gate FAILED: run directory {run_dir} doesn't exist")
+        return 1
+
+    expected = [c.id for c in load_cases(args.cases)]
+    meta, all_cases = load_run(run_dir)
+    by_id = {labels["id"]: (labels, cj) for labels, cj in all_cases}
+    missing = [cid for cid in expected if cid not in by_id]
+    crashed = [cid for cid in expected if cid in by_id
+               and not any(not r.get("harness_error") for r in by_id[cid][1]["runs"])]
+    out = [f"# Eval gate: {run_dir.name}", ""]
+    if missing or crashed:
+        reason = "; ".join(filter(None, [
+            f"{len(missing)} case(s) have no result: {', '.join(missing)}" if missing else "",
+            f"{len(crashed)} case(s) only crashed in the harness: {', '.join(crashed)}" if crashed else ""]))
+        message = (f"eval gate FAILED: the run is incomplete ({len(expected)} `{args.cases}` cases expected): "
+                   f"{reason}. Did the run stop partway? Re-run the job.")
+        print(message)
+        (run_dir / "gate.md").write_text("\n".join(out + [f"**FAILED**: {message}", ""]), encoding="utf-8")
+        return 1
+
+    cases = [by_id[cid] for cid in expected]
+    rows = evaluate_gate(gate_metrics(cases), thresholds)
+    failed = [r["rule"] for r in rows if not r["passed"]]
+    table = render_gate_table(rows)
+    verdict = (f"**FAILED**: {', '.join(failed)}" if failed
+               else f"**PASSED**: all {len(rows)} rules")
+    print("\n".join(table) + "\n\n" + verdict.replace("**", ""))
+    report = render_report(run_dir, meta, cases, load_sources(cases))
+    out += [verdict + f" ({len(cases)} `{args.cases}` cases; thresholds `{Path(args.thresholds).as_posix()}`)", "",
+            *table, "", "<details><summary>Score report</summary>", "",
+            report.replace("# Eval report", "## Eval report", 1), "</details>", ""]
+    (run_dir / "gate.md").write_text("\n".join(out), encoding="utf-8")
+    print(f"wrote {run_dir / 'gate.md'}")
+    return 1 if failed else 0
+
+
 # --- guardrail -----------------------------------------------------------------
 
 def _guardrail_target(args) -> tuple[str, str] | None:
@@ -646,6 +779,12 @@ def main(argv: list[str] | None = None) -> int:
     score.add_argument("run_dir")
     score.add_argument("--md", action="store_true", help="also write <run_dir>/report.md")
     score.set_defaults(func=cmd_score)
+
+    gate = sub.add_parser("gate", help="pass/fail a saved run against evals/thresholds.yaml (no LLM calls)")
+    gate.add_argument("run_dir")
+    gate.add_argument("--thresholds", default=str(THRESHOLDS_FILE), help="default: evals/thresholds.yaml")
+    gate.add_argument("--cases", default="smoke", help="cases the run must hold and is scored on (default: smoke)")
+    gate.set_defaults(func=cmd_gate)
 
     gr = sub.add_parser("guardrail", help="screen the cases' patches with Bedrock Guardrails only (no LLM)")
     gr.add_argument("--cases", default="all", help="all | smoke | comma-separated case ids (default: all)")
