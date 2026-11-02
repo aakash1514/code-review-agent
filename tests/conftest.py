@@ -37,6 +37,8 @@ class FakeSettings:
     QDRANT_API_KEY = "test-qdrant-key"
     DASHBOARD_BASE_URL = "http://localhost:5173"
     DATABASE_URL = "sqlite:///./should-be-replaced-per-test.db"
+    GUARDRAIL_ID = ""  # prompt-injection screen off unless a test turns it on
+    GUARDRAIL_VERSION = "1"
 
 
 _fake_config = types.ModuleType("config")

@@ -81,6 +81,10 @@ class Settings:
     # Titan V2 vector size: 256, 512 or 1024. Changing it means a new
     # Qdrant collection (codebase_titan<dim>) and a reindex.
     BEDROCK_EMBED_DIM: str = _env("BEDROCK_EMBED_DIM", "512")
+    # Bedrock Guardrails prompt-injection screen for PR patches
+    # (pipeline/guardrail.py), called in AWS_REGION. Empty ID = off.
+    GUARDRAIL_ID: str = _env("GUARDRAIL_ID")
+    GUARDRAIL_VERSION: str = _env("GUARDRAIL_VERSION", "1")
 
     # Qdrant
     QDRANT_URL: str = _env("QDRANT_URL")
