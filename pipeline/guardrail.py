@@ -92,6 +92,18 @@ def chunk_text(text: str, size: int | None = None, overlap: int | None = None) -
         start += size - overlap
 
 
+def _error_text(e: Exception) -> str:
+    """short_error, but for an AWS error just "Code: message": botocore's
+    "An error occurred (...) when calling the ApplyGuardrail operation:"
+    prefix otherwise pushes the reason past short_error's length cut."""
+    error = (getattr(e, "response", None) or {}).get("Error") or {}
+    if not error.get("Code"):
+        return short_error(e)
+    text = f"{error['Code']}: {error.get('Message') or ''}".strip().rstrip(":")
+    text = text.splitlines()[0]
+    return text if len(text) <= 160 else text[:159] + "…"
+
+
 def _prompt_attack(response: dict) -> str | None:
     """The confidence of a detected PROMPT_ATTACK filter in an
     ApplyGuardrail response, or None when it didn't intervene for one."""
@@ -136,7 +148,7 @@ def screen_patch(changed_file: str, patch: str, guardrail_id: str | None = None,
         result = ScreenResult(blocked=confidence is not None,
                               detail=f"PROMPT_ATTACK (confidence {confidence})" if confidence else None)
     except Exception as e:
-        result = ScreenResult(blocked=False, error=short_error(e))
+        result = ScreenResult(blocked=False, error=_error_text(e))
     log_event("guardrail_screened", file=changed_file, blocked=result.blocked, error=result.error)
     return result
 

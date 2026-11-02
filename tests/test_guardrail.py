@@ -74,6 +74,16 @@ def test_any_error_fails_open(client, guardrail_on):
         blocked=False, error="RuntimeError: ThrottlingException: Rate exceeded")
 
 
+def test_aws_error_is_code_and_message(client, guardrail_on):
+    from botocore.exceptions import ClientError
+    client.apply_guardrail.side_effect = ClientError(
+        {"Error": {"Code": "ValidationException",
+                   "Message": "The guardrail identifier or version provided in the request does not exist."}},
+        "ApplyGuardrail")
+    assert screen_patch("app.py", PATCH).error == (
+        "ValidationException: The guardrail identifier or version provided in the request does not exist.")
+
+
 def test_client_creation_error_fails_open(monkeypatch, guardrail_on):
     monkeypatch.setattr(guardrail, "_client", None)
     monkeypatch.setattr(guardrail, "_get_client", MagicMock(side_effect=ValueError("no region")))
