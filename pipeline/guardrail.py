@@ -164,10 +164,14 @@ def added_line_span(patch: str) -> tuple[int, int]:
     return start, start
 
 
+def detail_confidence(detail: str | None) -> str | None:
+    """"HIGH", "MEDIUM" or "LOW" from a ScreenResult's detail, else None."""
+    return next((c for c in CONFIDENCE if detail and f"confidence {c}" in detail), None)
+
+
 def prompt_injection_finding(changed_file: str, patch: str, detail: str | None) -> Finding:
     """The CRITICAL finding that stands in for a quarantined file's review."""
-    confidence = next((CONFIDENCE[c] for c in ("HIGH", "MEDIUM", "LOW") if detail and f"confidence {c}" in detail),
-                      CONFIDENCE["HIGH"])
+    confidence = CONFIDENCE.get(detail_confidence(detail), CONFIDENCE["HIGH"])
     start, end = added_line_span(patch)
     return Finding(
         category=FindingCategory.SECURITY,

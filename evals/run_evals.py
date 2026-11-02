@@ -1,9 +1,11 @@
 """Offline eval harness for the review pipeline.
 
   python -m evals.run_evals run [--cases smoke|all|id1,id2] [--context none|kg]
-                                [--no-severity-cap] [--no-floor] [--repeat N] [--pause S]
+                                [--no-severity-cap] [--no-floor] [--guardrail] [--repeat N] [--pause S]
                                 [--out evals/runs/<name>]
   python -m evals.run_evals score <run_dir> [--md]
+  python -m evals.run_evals guardrail [--cases all|smoke|id1,id2] [--out evals/runs/<name>]
+                                      [--guardrail-id ID] [--guardrail-version V]
 
 `run` reviews each golden case the way api/webhook._run_review_pipeline
 reviews a PR file (file plan -> context -> agents -> build_review_report ->
@@ -15,11 +17,17 @@ when started again with the same --out and flags.
 
 `score` re-scores a run directory against the current labels with no LLM
 calls (see evals/scoring.py).
+
+`guardrail` sends each case's patch through the Bedrock Guardrails
+prompt-injection screen only (pipeline/guardrail.py): no agents, no LLM.
+It reports the detection rate on expect_injection cases and the
+false-positive rate on all the others.
 """
 import argparse
 import asyncio
 import io
 import json
+import os
 import platform
 import re
 import shutil
@@ -103,10 +111,14 @@ class _Tee(io.TextIOBase):
         self.stream.flush()
 
 
-def run_case(case: Case, context_mode: str) -> tuple[dict, str]:
+def run_case(case: Case, context_mode: str, guardrail: tuple[str, str] | None = None) -> tuple[dict, str]:
     """Reviews one case like the webhook reviews one PR file. Returns the
-    run record saved under "runs" in <case_id>.json, and the printed log."""
+    run record saved under "runs" in <case_id>.json, and the printed log.
+    guardrail: (id, version) to screen the patch first, as production does
+    when GUARDRAIL_ID is set; a flagged patch is quarantined (no agents)."""
     from agents.documentation_agent import run_documentation_agent
+    from models.findings import AgentReport
+    from pipeline.guardrail import prompt_injection_finding, screen_patch
     from pipeline.file_filter import plan_review_files
     from pipeline.hitl_gate import evaluate_hitl_gate
     from pipeline.runner import run_agents_parallel
@@ -124,6 +136,14 @@ def run_case(case: Case, context_mode: str) -> tuple[dict, str]:
         reports, contexts = [], []
         with count_llm_calls() as counter:
             for target in plan.to_review:
+                if guardrail:
+                    screen = screen_patch(target.filename, target.patch, *guardrail)
+                    record["guardrail"] = {"blocked": screen.blocked, "error": screen.error, "detail": screen.detail}
+                    if screen.blocked:
+                        reports.append(AgentReport(
+                            agent_name="guardrail", summary=f"quarantined: {screen.detail}",
+                            findings=[prompt_injection_finding(target.filename, target.patch, screen.detail)]))
+                        continue
                 context_text, context_info = build_context(case, target.patch, context_mode)
                 contexts.append(context_info)
                 reports += asyncio.run(run_agents_parallel(
@@ -180,9 +200,16 @@ def cmd_run(args) -> int:
     cases = load_cases(args.cases)
     flags = {"cases": args.cases, "context": args.context, "severity_cap": not args.no_severity_cap,
              "floor": not args.no_floor, "repeat": args.repeat}
+    guardrail = None
+    if args.guardrail:
+        guardrail = _guardrail_target(args)
+        if guardrail is None:
+            return 2
+        # Only present when on, so runs without it keep the v1/v2 flags (and resume).
+        flags["guardrail"] = True
     out = Path(args.out) if args.out else RUNS_DIR / (
         datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.context}" + ("-nocap" if args.no_severity_cap else "")
-        + ("-nofloor" if args.no_floor else ""))
+        + ("-nofloor" if args.no_floor else "") + ("-guardrail" if args.guardrail else ""))
     out.mkdir(parents=True, exist_ok=True)
     (out / "logs").mkdir(exist_ok=True)
 
@@ -199,6 +226,7 @@ def cmd_run(args) -> int:
             "git_dirty": bool(_git("status", "--porcelain", "--untracked-files=no")),
             "models": {"reasoning": settings.GROQ_MODEL_REASONING, "light": settings.GROQ_MODEL_LIGHT},
             "flags": flags,
+            **({"guardrail": {"id": guardrail[0], "version": guardrail[1]}} if guardrail else {}),
             "pause_seconds": args.pause,
             "case_ids": [c.id for c in cases],
             "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -223,7 +251,7 @@ def cmd_run(args) -> int:
                 time.sleep(args.pause)
             first = False
             print(f"\n=== [{k + 1}/{args.repeat}] {case.id}", flush=True)
-            record, log = run_case(case, args.context)
+            record, log = run_case(case, args.context, guardrail)
             record["repeat"] = k + 1
             case_json["labels"] = case.labels
             case_json["runs"].append(record)
@@ -310,8 +338,9 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]],
                f"models {meta.get('models', {}).get('reasoning', '?')} / {meta.get('models', {}).get('light', '?')}")
     floor = {None: "n/a (before the floor existed)", True: "on", False: "OFF"}[flags.get("floor")]
     out.append(f"- Flags: context=`{flags.get('context')}`, severity cap {'on' if flags.get('severity_cap', True) else 'OFF'}, "
-               f"security floor {floor}, "
-               f"cases=`{flags.get('cases')}`; {len(cases)} cases x {len(per_repeat)} repeat(s)"
+               f"security floor {floor}"
+               + (", guardrail screen on" if flags.get("guardrail") else "")
+               + f", cases=`{flags.get('cases')}`; {len(cases)} cases x {len(per_repeat)} repeat(s)"
                + (f"; {failed} run(s) crashed in the harness (excluded)" if failed else ""))
     if len(per_repeat) > 1:
         out.append("- Values are the mean over repeats, with (min–max) when they differ.")
@@ -434,6 +463,126 @@ def cmd_score(args) -> int:
     return 0
 
 
+# --- guardrail -----------------------------------------------------------------
+
+def _guardrail_target(args) -> tuple[str, str] | None:
+    """(id, version) from --guardrail-id/--guardrail-version, else the
+    GUARDRAIL_ID/GUARDRAIL_VERSION environment variables. None (with a
+    message) when no guardrail ID is set."""
+    guardrail_id = (args.guardrail_id or os.getenv("GUARDRAIL_ID") or "").strip()
+    version = (args.guardrail_version or os.getenv("GUARDRAIL_VERSION") or "1").strip()
+    if not guardrail_id:
+        print("no guardrail configured: set GUARDRAIL_ID (and GUARDRAIL_VERSION, default 1) "
+              "or pass --guardrail-id/--guardrail-version")
+        return None
+    return guardrail_id, version
+
+
+def screen_case(case: Case, guardrail: tuple[str, str]) -> dict:
+    """One case's patch through the guardrail, as the webhook screens a PR file."""
+    from pipeline.guardrail import detail_confidence, screen_patch
+
+    started = time.monotonic()
+    result = screen_patch(case.file_path, case.patch, *guardrail)
+    return {
+        "case_id": case.id,
+        "expect_injection": case.expect_injection,
+        "flagged": result.blocked,
+        "confidence": detail_confidence(result.detail),
+        "detail": result.detail,
+        "error": result.error,
+        "ms": int((time.monotonic() - started) * 1000),
+    }
+
+
+def guardrail_metrics(records: list[dict]) -> dict:
+    """Detection rate on expect_injection cases, false-positive rate on the
+    rest. Cases whose screen call errored are left out of both rates and
+    counted under errors."""
+    ok = [r for r in records if not r["error"]]
+    positives = [r for r in ok if r["expect_injection"]]
+    negatives = [r for r in ok if not r["expect_injection"]]
+    detected = [r for r in positives if r["flagged"]]
+    false_positives = [r for r in negatives if r["flagged"]]
+    return {
+        "injections": len(positives),
+        "detected": len(detected),
+        "detection_rate": len(detected) / len(positives) if positives else None,
+        "missed": [r["case_id"] for r in positives if not r["flagged"]],
+        "negatives": len(negatives),
+        "false_positives": len(false_positives),
+        "false_positive_rate": len(false_positives) / len(negatives) if negatives else None,
+        "flagged_negatives": [(r["case_id"], r["confidence"]) for r in false_positives],
+        "errors": len(records) - len(ok),
+        "errored": [(r["case_id"], r["error"]) for r in records if r["error"]],
+    }
+
+
+def render_guardrail_report(run_dir: Path, meta: dict, records: list[dict]) -> str:
+    m = guardrail_metrics(records)
+    g = meta.get("guardrail", {})
+    out = [f"# Guardrail eval: {run_dir.name}", "",
+           f"- Guardrail `{g.get('id', '?')}` version `{g.get('version', '?')}`, commit "
+           f"`{meta.get('git_sha', '?')[:10]}`{' (dirty)' if meta.get('git_dirty') else ''}; "
+           f"{len(records)} cases, one patch per case through ApplyGuardrail (no agents, no LLM).",
+           "- Rates leave out cases whose screen call errored.", ""]
+    out += _table(["Metric", "Value"], [
+        ["Detection rate (expect_injection)", f"{m['detected']}/{m['injections']} ({_fmt(m['detection_rate'], 'pct')})"],
+        ["False-positive rate (all other cases)",
+         f"{m['false_positives']}/{m['negatives']} ({_fmt(m['false_positive_rate'], 'pct')})"],
+        ["Missed injections", ", ".join(m["missed"]) or "none"],
+        ["Flagged clean/other cases", ", ".join(f"{cid} ({conf})" for cid, conf in m["flagged_negatives"]) or "none"],
+        ["Errors", str(m["errors"]) + ("".join(f"; {cid}: {e}" for cid, e in m["errored"]))],
+    ])
+    out += ["", "## Per case", ""]
+    out += _table(["Case", "Expected", "Flagged", "Confidence", "Result", "ms"], [
+        [r["case_id"], "injection" if r["expect_injection"] else "clean",
+         "error" if r["error"] else ("yes" if r["flagged"] else "no"), r["confidence"] or "–",
+         ("ERROR: " + r["error"].replace("|", "\\|")) if r["error"]
+         else ("ok" if r["flagged"] == r["expect_injection"] else ("MISSED" if r["expect_injection"] else "FALSE POSITIVE")),
+         str(r["ms"])]
+        for r in records])
+    return "\n".join(out) + "\n"
+
+
+def cmd_guardrail(args) -> int:
+    guardrail = _guardrail_target(args)
+    if guardrail is None:
+        return 2
+    cases = load_cases(args.cases)
+    out = Path(args.out) if args.out else RUNS_DIR / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-guardrail")
+    out.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "kind": "guardrail",
+        "git_sha": _git("rev-parse", "HEAD"),
+        "git_dirty": bool(_git("status", "--porcelain", "--untracked-files=no")),
+        "guardrail": {"id": guardrail[0], "version": guardrail[1]},
+        "region": os.getenv("AWS_REGION") or "ap-south-1 (default)",
+        "cases": args.cases,
+        "case_ids": [c.id for c in cases],
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    records = []
+    for case in cases:
+        record = screen_case(case, guardrail)
+        records.append(record)
+        (out / f"{case.id}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+        print(f"=== {case.id}: expect_injection={case.expect_injection} flagged={record['flagged']}"
+              + (f" ({record['confidence']})" if record["confidence"] else "")
+              + (f" ERROR {record['error']}" if record["error"] else ""), flush=True)
+    meta["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    (out / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    report = render_guardrail_report(out, meta, records)
+    (out / "report.md").write_text(report, encoding="utf-8")
+    print("\n" + report + f"\nwrote {out / 'report.md'}")
+    return 0
+
+
+def _add_guardrail_args(parser) -> None:
+    parser.add_argument("--guardrail-id", help="guardrail ID (default: $GUARDRAIL_ID)")
+    parser.add_argument("--guardrail-version", help="guardrail version (default: $GUARDRAIL_VERSION, else 1)")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.run_evals", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -445,6 +594,9 @@ def main(argv: list[str] | None = None) -> int:
                      help="baseline: turn off the architecture agent's CRITICAL cap")
     run.add_argument("--no-floor", action="store_true",
                      help="ablation: turn off the security agent's CRITICAL floor")
+    run.add_argument("--guardrail", action="store_true",
+                     help="screen each patch with Bedrock Guardrails first, like production (default off)")
+    _add_guardrail_args(run)
     run.add_argument("--repeat", type=int, default=1)
     run.add_argument("--pause", type=float, default=10.0, help="seconds between cases (default 10)")
     run.add_argument("--out", help="run directory (default evals/runs/<timestamp>-<context>)")
@@ -454,6 +606,12 @@ def main(argv: list[str] | None = None) -> int:
     score.add_argument("run_dir")
     score.add_argument("--md", action="store_true", help="also write <run_dir>/report.md")
     score.set_defaults(func=cmd_score)
+
+    gr = sub.add_parser("guardrail", help="screen the cases' patches with Bedrock Guardrails only (no LLM)")
+    gr.add_argument("--cases", default="all", help="all | smoke | comma-separated case ids (default: all)")
+    gr.add_argument("--out", help="output directory (default evals/runs/<timestamp>-guardrail)")
+    _add_guardrail_args(gr)
+    gr.set_defaults(func=cmd_guardrail)
 
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):  # Windows consoles default to cp1252
