@@ -35,12 +35,14 @@ def llm_inputs(inputs: dict) -> dict:
 def record_llm_usage(provider: str, model: str, usage: dict, finish_reason: str | None) -> None:
     """Attaches token counts and the model to the current LLM run, if there
     is one (no-op when tracing is off). LangSmith uses usage_metadata for its
-    token and cost columns, and ls_provider/ls_model_name to price the call."""
+    token and cost columns, and ls_provider/ls_model_name to price the call.
+    usage is Groq's (prompt_tokens/completion_tokens) or Bedrock Converse's
+    (inputTokens/outputTokens, reasoning included in outputTokens)."""
     run = get_current_run_tree()
     if run is None:
         return
-    prompt = usage.get("prompt_tokens", 0) or 0
-    completion = usage.get("completion_tokens", 0) or 0
+    prompt = usage.get("prompt_tokens", usage.get("inputTokens", 0)) or 0
+    completion = usage.get("completion_tokens", usage.get("outputTokens", 0)) or 0
     reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0) or 0
     run.set(
         usage_metadata={
