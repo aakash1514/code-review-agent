@@ -1,7 +1,8 @@
 name: ci
 
 # Runs on every PR into main and on every push to main.
-# No secrets and no AWS access: it only tests, lints, builds and scans.
+# No secrets. The only AWS access is the Eval gate job's (PRs only): an OIDC
+# role in the `evals` environment that can call two Bedrock models, nothing else.
 on:
   pull_request:
     branches: [main]
@@ -81,3 +82,108 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           format: table
+
+  # Smoke eval (8 golden cases, Bedrock gpt-oss, ~$0.01, 1-2 min) gated by
+  # evals/thresholds.yaml. Always runs on PRs so it can be a required check;
+  # PRs that touch no review-quality path pass in seconds. See evals/README.md.
+  eval-gate:
+    name: Eval gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: evals
+    permissions:
+      id-token: write  # OIDC -> cra-gha-evals (bedrock:InvokeModel on gpt-oss only)
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Detect review-quality changes
+        id: changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          paths='^(agents/|pipeline/|rag/|evals/|models/|tools/(model_client|bedrock_llm|prompt_boundaries|code_tools)\.py$|config\.py$|requirements\.txt$)'
+          matched=$(git diff --name-only "origin/${BASE_REF}...HEAD" | grep -E "$paths" || true)
+          if [ -n "$matched" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "Review-quality paths changed:"
+            echo "$matched"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No review-quality paths changed."
+          fi
+
+      - name: Skip (no review-quality paths changed)
+        if: steps.changes.outputs.relevant != 'true'
+        run: |
+          echo "### Eval gate: skipped: no review-quality paths changed" >> "$GITHUB_STEP_SUMMARY"
+
+      # Fork PRs get no OIDC token, so the eval can't run; failing (rather
+      # than passing silently) makes a maintainer run it.
+      - name: Fork check
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            msg="eval gate needs a maintainer run for fork PRs (head repo $HEAD_REPO gets no OIDC token for $BASE_REPO)"
+            echo "### Eval gate: FAILED: $msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$msg"
+            exit 1
+          fi
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: steps.changes.outputs.relevant == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        if: steps.changes.outputs.relevant == 'true'
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Configure AWS credentials (OIDC, evals role)
+        if: steps.changes.outputs.relevant == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_EVALS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Bedrock only (no Groq fallback, no key here); --context kg builds the
+      # knowledge graph locally, so no Qdrant, GitHub or guardrail calls.
+      - name: Smoke eval (Bedrock gpt-oss)
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          LLM_PROVIDER: bedrock
+          LLM_FALLBACK: none
+        run: python -m evals.run_evals run --cases smoke --context kg --out evals/runs/ci
+
+      - name: Gate (evals/thresholds.yaml)
+        if: steps.changes.outputs.relevant == 'true'
+        run: python -m evals.run_evals gate evals/runs/ci
+
+      - name: Job summary
+        if: always() && steps.changes.outputs.relevant == 'true'
+        run: |
+          if [ -f evals/runs/ci/gate.md ]; then
+            cat evals/runs/ci/gate.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Eval gate: no gate.md (the job stopped before the gate; see the step logs)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload eval run
+        if: always() && steps.changes.outputs.relevant == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eval-gate-pr${{ github.event.pull_request.number }}-attempt${{ github.run_attempt }}
+          path: evals/runs/ci
+          retention-days: 14
+          if-no-files-found: ignore

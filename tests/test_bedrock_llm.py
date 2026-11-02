@@ -315,3 +315,20 @@ def test_bedrock_call_is_an_llm_run_with_provider_and_usage(bedrock):
     assert meta["finish_reason"] == "end_turn"
     usage = meta.get("usage_metadata") or run.get("outputs", {}).get("usage_metadata")
     assert usage["input_tokens"] == 1000 and usage["output_tokens"] == 400 and usage["total_tokens"] == 1400
+
+
+def test_groq_daily_quota_in_the_fallback_fails_fast(bedrock, monkeypatch):
+    monkeypatch.setattr(mc.time, "sleep", lambda s: pytest.fail("slept on a Groq daily quota"))
+    bedrock.client.converse.side_effect = ClientError(
+        {"Error": {"Code": "ThrottlingException", "Message": "Too many requests"}}, "Converse")
+    tpd = MagicMock(status_code=429, headers={"retry-after": "435"},
+                    text='{"error": {"message": "Rate limit reached on tokens per day (TPD): Limit 200000"}}')
+    bedrock.groq_post.return_value = tpd
+
+    with pytest.raises(ModelUnavailableError) as exc:
+        model_client.reason(system="s", user="u", task="security")
+
+    assert bedrock.groq_post.call_count == 2  # both Groq tiers tried once each
+    groq_error = exc.value.__cause__
+    assert isinstance(groq_error, ModelUnavailableError)
+    assert isinstance(groq_error.__cause__, mc.GroqDailyQuotaError)

@@ -1,0 +1,30 @@
+# Thresholds for the CI eval gate (python -m evals.run_evals gate).
+# The gate scores one smoke run (evals/smoke.txt, 8 cases) on Bedrock gpt-oss
+# with strict scoring, and fails if any rule below fails. Baselines are from
+# the smoke-delims run (Bedrock gpt-oss, random prompt delimiters, PR #19).
+# Each threshold leaves room for one run's noise, but not for a regression
+# that changes what gets blocked.
+
+# Clean or non-critical cases that the HITL gate blocked. A false block stops
+# a good PR from merging, so none are allowed.
+false_blocks_max: 0            # baseline 0
+
+# Expected-block cases (sec-01, arch-05) that were blocked. arch-05's
+# swallowed exception is always missed (KNOWN_ISSUES #8: its hunk starts
+# mid-function, so it gets no KG context), so 0.50 means "sec-01's SQL
+# injection still blocks".
+block_recall_min: 0.50         # baseline 0.50 (arch-05 is always missed)
+
+# Labelled issues found at any severity, all categories, on the agents'
+# reported lines. Set below the baseline: one run's line-number noise moves
+# one or two of the 7 issues.
+recall_min: 0.60               # baseline 0.71 (strict, all categories)
+
+# CRITICAL findings that match no CRITICAL label (0.0 when there are none).
+# Any false CRITICAL blocks a PR; 0.25 allows one in four before the gate
+# fails, and false_blocks_max catches one that actually blocks a clean case.
+false_critical_rate_max: 0.25  # baseline 0.0
+
+# Case runs where an agent returned an error (e.g. Bedrock throttling with no
+# fallback, a parse failure after retries). One is tolerated as transient.
+agent_error_runs_max: 1        # baseline 0

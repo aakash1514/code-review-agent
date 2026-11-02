@@ -153,7 +153,66 @@ def test_429_logs_rate_limit_headers_and_body_without_secrets(groq, monkeypatch,
     assert "content-type" not in out
     assert "org_01abcXYZ" not in out and "org_***" in out
     assert "test-groq-key" not in out
-    assert "rate-limited on openai/gpt-oss-120b, waiting 431s" in out
+    assert "daily quota (TPD) exhausted on openai/gpt-oss-120b; not waiting 431s" in out
+
+
+_TPD_BODY = ('{"error": {"message": "Rate limit reached for model `openai/gpt-oss-120b` in organization '
+             '`org_01abc` on tokens per day (TPD): Limit 200000, Used 199500, Requested 6000."}}')
+_TPM_BODY = ('{"error": {"message": "Rate limit reached for model `openai/gpt-oss-120b` in organization '
+             '`org_01abc` on tokens per minute (TPM): Limit 8000, Used 7000, Requested 2000."}}')
+
+
+def _limited(body, retry_after="435", **headers):
+    return MagicMock(status_code=429, text=body, headers={"retry-after": retry_after, **headers})
+
+
+def test_daily_quota_429_fails_fast_to_the_other_tier(groq, monkeypatch, capsys):
+    slept = []
+    monkeypatch.setattr(mc.time, "sleep", slept.append)
+    groq.side_effect = [_limited(_TPD_BODY), _response(content="[]")]
+
+    with mc.count_llm_calls() as counter:
+        assert model_client.reason(system="s", user="u", task="security") == "[]"
+
+    assert slept == []
+    assert counter.rate_limit_wait_ms == 0 and counter.fallbacks == 1 and counter.calls == 2
+    first, second = (c.kwargs["json"]["model"] for c in groq.call_args_list)
+    assert (first, second) == ("openai/gpt-oss-120b", "openai/gpt-oss-20b")
+    out = capsys.readouterr().out
+    assert out.count("[groq] daily quota (TPD) exhausted") == 1
+    assert "GroqDailyQuotaError" in out and "rate-limited on" not in out
+
+
+def test_daily_quota_on_both_tiers_raises_without_sleeping(groq, monkeypatch):
+    slept = []
+    monkeypatch.setattr(mc.time, "sleep", slept.append)
+    groq.side_effect = [_limited(_TPD_BODY), _limited(_TPD_BODY.replace("120b", "20b"))]
+
+    with pytest.raises(ModelUnavailableError) as exc:
+        model_client.reason(system="s", user="u", task="security")
+
+    assert slept == [] and groq.call_count == 2
+    assert isinstance(exc.value.__cause__, mc.GroqDailyQuotaError)
+
+
+def test_daily_request_quota_from_headers_fails_fast(groq, monkeypatch):
+    monkeypatch.setattr(mc.time, "sleep", lambda s: pytest.fail("slept on a daily quota"))
+    groq.side_effect = [_limited("", **{"x-ratelimit-remaining-requests": "0"}), _response(content="[]")]
+    assert model_client.reason(system="s", user="u", task="security") == "[]"
+
+
+def test_per_minute_429_still_waits_and_retries(groq, monkeypatch, capsys):
+    slept = []
+    monkeypatch.setattr(mc.time, "sleep", slept.append)
+    groq.side_effect = [_limited(_TPM_BODY, retry_after="6", **{"x-ratelimit-remaining-requests": "990"}),
+                        _response(content="[]")]
+
+    assert model_client.reason(system="s", user="u", task="security") == "[]"
+
+    assert slept == [6]
+    assert [c.kwargs["json"]["model"] for c in groq.call_args_list] == ["openai/gpt-oss-120b"] * 2
+    out = capsys.readouterr().out
+    assert "rate-limited on openai/gpt-oss-120b, waiting 6s" in out and "daily quota" not in out
 
 
 def test_counter_counts_fallbacks_and_rate_limit_waits(groq, monkeypatch):

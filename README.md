@@ -147,6 +147,8 @@ dashboard/   React + Vite frontend
 
 6. **Tests:** `python -m pytest` (no network or real keys needed).
 
+   **CI** (`.github/workflows/ci.yml`) runs the tests, the dashboard lint and build, and a Docker build with a Trivy scan on every PR and push to `main`. PRs that touch review-quality code also get the **Eval gate**: an 8-case smoke eval on Bedrock gpt-oss (about $0.01), checked against `evals/thresholds.yaml` ([evals/README.md](evals/README.md#ci-eval-gate)).
+
 ## Running in Docker
 
 The same image that will run in the cloud also runs locally with Docker Compose. It defaults to JSON logs, `DATA_DIR=/data` (a named volume) and Bedrock embeddings. Compose reads `.env` for the GitHub App, Groq, Qdrant and OAuth settings, and mounts the GitHub App key from `./github-app-private-key.pem` as a compose secret.
