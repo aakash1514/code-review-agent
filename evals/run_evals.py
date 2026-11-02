@@ -207,8 +207,12 @@ def _llm_meta() -> dict:
     chain = provider_chain()
     meta = {"provider_chain": chain}
     if "bedrock" in chain:
-        meta["bedrock"] = {"model": bedrock_llm.model_id(), "efforts": bedrock_llm.task_efforts(),
-                           "max_rpm": float(getattr(settings, "BEDROCK_LLM_MAX_RPM", "") or 18)}
+        models = {task: bedrock_llm.model_for(task) for task in bedrock_llm.TASK_ROUTING}
+        meta["bedrock"] = {
+            "models": models,
+            "efforts": {task: bedrock_llm.effort_for(model, task) for task, model in models.items()},
+            "max_rpm": {model: bedrock_llm.max_rpm(model) for model in sorted(set(models.values()))},
+        }
     return meta
 
 
@@ -358,8 +362,8 @@ def render_report(run_dir: Path, meta: dict, cases: list[tuple[dict, dict]],
     llm = meta.get("llm") or {"provider_chain": ["groq"]}
     if llm["provider_chain"][:1] == ["bedrock"]:
         b = llm.get("bedrock", {})
-        models = (f"Bedrock {b.get('model', '?')}, efforts "
-                  + ", ".join(f"{t}={e}" for t, e in (b.get("efforts") or {}).items()))
+        per_task = b.get("models") or {t: b.get("model", "?") for t in (b.get("efforts") or {})}
+        models = "Bedrock " + ", ".join(f"{t}={per_task.get(t, '?')}@{e}" for t, e in (b.get("efforts") or {}).items())
     else:
         models = f"Groq {meta.get('models', {}).get('reasoning', '?')} / {meta.get('models', {}).get('light', '?')}"
     fallback = " -> ".join(llm["provider_chain"])
