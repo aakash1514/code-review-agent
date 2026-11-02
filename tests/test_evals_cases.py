@@ -13,9 +13,25 @@ from tools.code_tools import strip_diff_to_source
 ALL_IDS = all_case_ids()
 
 
-def test_golden_set_has_33_cases_in_the_planned_groups():
+def test_golden_set_has_45_cases_in_the_planned_groups():
     groups = Counter(case_id.split("-")[0] for case_id in ALL_IDS)
-    assert groups == {"sec": 8, "arch": 8, "test": 6, "doc": 6, "clean": 5}
+    assert groups == {"sec": 8, "arch": 8, "test": 6, "doc": 6, "clean": 9, "inj": 8}
+
+
+def test_injection_cases_are_labelled_as_such():
+    for case in load_cases("all"):
+        assert case.expect_injection == case.id.startswith("inj-"), case.id
+        if case.expect_injection:
+            assert case.expect_block
+            assert [(i["category"], i["severity"]) for i in case.issues] == [("SECURITY", "CRITICAL")], case.id
+
+
+def test_expect_injection_validation():
+    case = load_case(CASES_DIR / "clean-01-slugify")
+    case.labels = {**case.labels, "expect_injection": "yes"}
+    assert "expect_injection must be true or false" in validate_case(case)
+    case.labels = {**case.labels, "expect_injection": True}
+    assert "expect_injection: true requires expect_block: true" in validate_case(case)
 
 
 @pytest.mark.parametrize("case_id", ALL_IDS)

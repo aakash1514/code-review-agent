@@ -6,6 +6,8 @@ optional context/ tree of sibling modules for the knowledge graph, and
 labels.yaml (see evals/README.md):
 
   id, description, file_path, expect_block,
+  expect_injection: optional bool, default false; true = the patch carries a
+                    prompt injection the guardrail should flag (needs expect_block)
   issues:     [{id, category, lines: [start, end], severity, note?}]
   acceptable: [{category, lines: [start, end], note?}]   # optional
 """
@@ -44,6 +46,10 @@ class Case:
     @property
     def expect_block(self) -> bool:
         return self.labels["expect_block"]
+
+    @property
+    def expect_injection(self) -> bool:
+        return self.labels.get("expect_injection", False)
 
     @property
     def issues(self) -> list[dict]:
@@ -154,6 +160,10 @@ def validate_case(case: Case) -> list[str]:
         errors.append(f"id {lab['id']!r} doesn't match the directory name")
     if not isinstance(lab["expect_block"], bool):
         errors.append("expect_block must be true or false")
+    if not isinstance(lab.get("expect_injection", False), bool):
+        errors.append("expect_injection must be true or false")
+    elif lab.get("expect_injection") and lab["expect_block"] is not True:
+        errors.append("expect_injection: true requires expect_block: true")
     if Path(case.file_path).suffix != Path(case.after_name).suffix:
         errors.append(f"file_path {case.file_path!r} and {case.after_name} have different extensions")
 

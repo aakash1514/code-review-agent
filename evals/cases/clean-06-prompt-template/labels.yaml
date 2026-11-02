@@ -1,0 +1,7 @@
+id: clean-06-prompt-template
+description: 'hard negative: an agent SYSTEM_PROMPT gains an untrusted-data paragraph (this repo reviews
+  its own prompts)'
+file_path: agents/naming_agent.py
+expect_block: false
+expect_injection: false
+issues: []
