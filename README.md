@@ -44,7 +44,7 @@ React dashboard ── live progress over WebSocket, approve / block override
 - **Severity-ranked synthesis.** Findings are de-duplicated across agents and re-runs, then ranked from CRITICAL to INFO.
 - **Merge gate with human in the loop.** CRITICAL findings set a failed `ai-code-review` commit status. A reviewer can approve or block from the dashboard, and that decision is stored.
 - **Live dashboard.** GitHub OAuth login, per-agent progress over WebSocket, a Monaco side-by-side diff viewer, and a React Flow call-graph view.
-- **LLM providers with fallback.** Groq's free tier by default: OpenAI's open-weight gpt-oss-120b for reasoning and gpt-oss-20b for simple tasks, with automatic fallback between them. Or Amazon Bedrock (Nova 2 Lite) as the primary, with Groq as the fallback provider (see [LLM provider](#llm-provider)).
+- **LLM providers with fallback.** Groq's free tier by default: OpenAI's open-weight gpt-oss-120b for reasoning and gpt-oss-20b for simple tasks, with automatic fallback between them. Or the same gpt-oss models on Amazon Bedrock (no daily cap) as the primary, with Groq as the fallback provider (see [LLM provider](#llm-provider)).
 - **Container-ready.** One non-root Docker image (about 115 MB compressed), configured only through environment variables. It writes structured JSON logs, exposes `/healthz`, and shuts down gracefully: reviews still unfinished at shutdown are marked `interrupted` and their GitHub check is set to error.
 
 ## Tech stack
@@ -52,7 +52,7 @@ React dashboard ── live progress over WebSocket, approve / block override
 | Layer | Tools |
 | --- | --- |
 | API | Python, FastAPI, WebSockets |
-| LLM | Groq: gpt-oss-120b + gpt-oss-20b, with fallback; or Amazon Bedrock Nova 2 Lite with Groq as fallback |
+| LLM | gpt-oss-120b + gpt-oss-20b on Groq, or on Amazon Bedrock with Groq as fallback (Nova 2 Lite selectable) |
 | Retrieval | Amazon Bedrock Titan Text Embeddings V2, or sentence-transformers on CPU (or the Hugging Face Inference API); Qdrant Cloud; Python `ast` call graph |
 | Storage | SQLite (jobs, results, override decisions) and knowledge-graph JSON, both under `DATA_DIR` |
 | GitHub | GitHub App (JWT + installation tokens), webhooks, commit status API, PR comments |
@@ -86,8 +86,10 @@ dashboard/   React + Vite frontend
    | `GITHUB_WEBHOOK_SECRET` | Secret used to verify webhook signatures |
    | `GROQ_API_KEY`, `GROQ_MODEL_REASONING`, `GROQ_MODEL_LIGHT` | Groq key and model IDs. Defaults `openai/gpt-oss-120b` and `openai/gpt-oss-20b` |
    | `LLM_PROVIDER`, `LLM_FALLBACK` | `groq` (default) or `bedrock`, then the provider tried if it fails: `groq` (default) or `none`. See [LLM provider](#llm-provider) |
-   | `BEDROCK_LLM_MODEL`, `BEDROCK_LLM_REGION` | Bedrock model. Default `global.amazon.nova-2-lite-v1:0` (the global inference profile). Region default: `AWS_REGION` |
-   | `BEDROCK_LLM_MAX_RPM` | Client-side pacing of Bedrock LLM calls. Default `18` |
+   | `BEDROCK_LLM_MODEL_REASONING`, `BEDROCK_LLM_MODEL_LIGHT` | Bedrock models for security/architecture/synthesis and for test coverage/documentation. Defaults `openai.gpt-oss-120b-1:0` and `openai.gpt-oss-20b-1:0`; `LIGHT=none` uses the reasoning model for both |
+   | `BEDROCK_LLM_MODEL` | Optional: one model for every task, overriding both, e.g. `global.amazon.nova-2-lite-v1:0` |
+   | `BEDROCK_LLM_REGION` | Region for Bedrock LLM calls. Default: `AWS_REGION` |
+   | `BEDROCK_LLM_MAX_RPM` | Pacing override: a number for every model, or `model-id=rpm,...`. Default per model: gpt-oss 90, Nova 2 Lite 18 |
    | `BEDROCK_REASONING_EFFORTS` | Per-task reasoning effort override, e.g. `security:medium,architecture:low`. Empty = the built-in map |
    | `EMBEDDING_PROVIDER` | `local` (default): embed in-process with sentence-transformers on CPU. `hf_api`: use the Hugging Face Inference API. `bedrock`: Amazon Bedrock Titan Text Embeddings V2 (`amazon.titan-embed-text-v2:0`) |
    | `HF_TOKEN` | Hugging Face token, only needed for `EMBEDDING_PROVIDER=hf_api` |
@@ -215,11 +217,13 @@ Routes marked "Yes" expect an `Authorization: Bearer <session_id>` header. The s
 
 `LLM_PROVIDER` picks who answers the agents and the synthesis step, and `LLM_FALLBACK` who is tried when it fails. With both left at `groq`, the defaults, only Groq is used: gpt-oss-120b for security, architecture and synthesis, gpt-oss-20b for test coverage and documentation, each falling back to the other. Groq's free tier allows 200k tokens per day per model, which a full eval run or a busy day of PRs uses up.
 
-With `LLM_PROVIDER=bedrock`, every call goes to Amazon Bedrock's Converse API with Nova 2 Lite (`global.amazon.nova-2-lite-v1:0`, the only route to it from ap-south-1). If Bedrock fails after its retries, the call moves to Groq; `LLM_FALLBACK=none` turns that off. Reasoning is always on, because without it Nova 2 Lite ignored "reply only with JSON". Security and architecture use effort `medium`, the rest `low`, overridable with `BEDROCK_REASONING_EFFORTS`.
+With `LLM_PROVIDER=bedrock`, every call goes to Amazon Bedrock's Converse API, by default with the same models as on Groq, hosted in-region in ap-south-1: `openai.gpt-oss-120b-1:0` for security, architecture and synthesis, `openai.gpt-oss-20b-1:0` for test coverage and documentation, with the same reasoning efforts (medium for the first three, low for the rest). If Bedrock fails after its retries, the call moves to Groq; `LLM_FALLBACK=none` turns that off. `BEDROCK_REASONING_EFFORTS` (e.g. `security:low`) overrides the efforts.
 
-**Quota and pacing.** This account's Nova 2 Lite quota is **20 requests per minute** (8M tokens per minute, 432M per day). The client paces its own calls at `BEDROCK_LLM_MAX_RPM` (default 18, about one every 3.3 s), on top of botocore's adaptive retries, so a review's four parallel agents queue instead of being throttled. The pacing has its own limiter, separate from the Titan embedder's (different quota). A review therefore takes at least about 10 s for its first file's agents to start.
+`BEDROCK_LLM_MODEL=global.amazon.nova-2-lite-v1:0` switches every task to Nova 2 Lite (the global profile is its only route from ap-south-1). Nova runs with reasoning `low` for every task: without reasoning it ignored "reply only with JSON", and at `medium` it often reasoned until `maxTokens` with no answer. In eval v3 it matched gpt-oss on the merge gate but found far less otherwise (`evals/RESULTS.md`).
 
-**Cost.** Nova 2 Lite costs about $0.30 per 1M input tokens and $2.50 per 1M output tokens, reasoning included (Groq's free tier counts as $0). Each review logs `LLMCostUSD` to CloudWatch, and the eval report shows cost per case and per run.
+**Quota and pacing.** This account's on-demand quotas in ap-south-1 are **100 requests per minute** each for gpt-oss-120b and gpt-oss-20b (100M tokens per minute, not adjustable), and **20 per minute** for Nova 2 Lite. The account also has a 150M tokens-per-day cross-model cap. The client paces each model's calls on its own limiter, at about 90% of its quota (gpt-oss 90/min, Nova 18/min; override with `BEDROCK_LLM_MAX_RPM`), on top of botocore's adaptive retries, so parallel agents queue instead of being throttled. These limiters are separate from the Titan embedder's.
+
+**Cost** per 1M input / output tokens, reasoning included: gpt-oss-120b $0.15 / $0.62, gpt-oss-20b $0.07 / $0.31, Nova 2 Lite $0.30 / $2.50 (the table and its sources are in `tools/model_client.py`; Groq's free tier counts as $0). Each review logs `LLMCostUSD` to CloudWatch, and the eval report shows cost per case and per run.
 
 ## Prompt-injection defence
 
