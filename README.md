@@ -1,6 +1,6 @@
 # Autonomous Multi-Agent Code Review
 
-Four specialist LLM agents review every GitHub pull request in parallel, with context from the whole codebase, and block the merge when they find a critical issue. A human reviewer can always override.
+Four specialist LLM agents review every GitHub pull request in parallel, with context from the whole codebase, and block the merge on a CRITICAL finding. A human reviewer can always override.
 
 [![ci](https://github.com/aakash1514/code-review-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aakash1514/code-review-agent/actions/workflows/ci.yml)
 ![Python 3.13](https://img.shields.io/badge/python-3.13-blue)
@@ -8,9 +8,9 @@ Four specialist LLM agents review every GitHub pull request in parallel, with co
 
 ## At a glance
 
-- **Merge-gate block recall went from 17% to 83%** on a 33-case golden set, with **0 false blocks** in every run. That's 5 of the 6 cases that should block, from a single repeat, so treat it as directional ([evals/RESULTS.md](evals/RESULTS.md)).
+- **Merge-gate block recall went from 17% to 83%** on a 33-case golden set, with **0 false blocks** in every full-suite run. That's 5 of the 6 cases that should block, from a single repeat, so treat it as directional ([evals/RESULTS.md](evals/RESULTS.md)).
 - **About $0.0017 per reviewed file, p50 latency 5.5 s** (p95 10.9 s) on Amazon Bedrock gpt-oss. That's 3.5x faster than the same models on Groq, with no daily token cap.
-- **Prompt-injection screen:** the Bedrock guardrail detected **5 of 8** injection cases with **0 false positives in 37** clean cases. Behind it, the model ignored injected text in all three cases the screen missed.
+- **Prompt-injection screen:** the Bedrock guardrail detected **5 of 8** injection cases with **0 false positives in 37** non-injection cases. Behind it, the model ignored injected text in all three cases the screen missed.
 - **An LLM eval gate in CI:** PRs that touch review logic run an 8-case smoke eval on Bedrock and must pass five thresholds before they can merge.
 - **Runs on AWS:** ECS Fargate behind CloudFront, deployed through GitHub OIDC with no long-lived AWS keys. The ECS circuit breaker rolled back a deliberately broken deploy without help.
 - **It reviews its own PRs:** `ai-code-review` is one of the 5 required checks on this repo.
@@ -107,7 +107,7 @@ All numbers come from [evals/RESULTS.md](evals/RESULTS.md). Each run is a **sing
 | **Block recall** | **17% (1/6)** | **67% (4/6)** | **83% (5/6)** |
 | False blocks | 0 | 0 | 0 |
 
-In v1 the agents found the issue in 5 of the 6 missed blocks but rated it HIGH. Detection was fine; the fix was severity policy. `arch-05` is still missed in every run, for a known reason ([KNOWN_ISSUES #8](docs/KNOWN_ISSUES.md)).
+In v1 the agents found the issue in all 5 missed blocks but rated it HIGH. Detection was fine; the fix was severity policy. `arch-05` is missed in every run: in v2 its agent failed under rate limits, and in v3b it came back as a HIGH architecture finding, which doesn't block. It also gets no call-graph context ([KNOWN_ISSUES #8, #13](docs/KNOWN_ISSUES.md)).
 
 ### Provider comparison (same 33 cases)
 
@@ -128,13 +128,13 @@ In v1 the agents found the issue in 5 of the 6 missed blocks but rated it HIGH. 
 | 1. Bedrock Guardrails screen | Separate classifier in front of the LLM. A flagged file is quarantined and blocks the merge | 5/8 injections detected, 0/37 false positives (all 4 hard negatives passed). Live: a malicious PR was quarantined and blocked. One real false positive, on PR #19, was cleared by a human |
 | 2. Random per-call delimiters | Untrusted blocks are fenced in tags with a random suffix, and the system prompt names only those tags | Closes the `</PR_DIFF>` break-out (`inj-06`) structurally, for any model. Smoke eval after the change showed no regression: recall 71% → 71%, precision 25% → 28% |
 | 3. Model choice | Run only a model that treats text in the diff as data | gpt-oss ignored the injection in all 3 cases the guardrail missed, in 3 samples each. Nova 2 Lite obeyed `inj-05` and `inj-08` every time |
-| 4. Deterministic severity floor | Canonical vulnerabilities are raised to CRITICAL in code when the wording and the code agree | An injection that talks the model down to HIGH still blocks. All 4 CRITICALs in v2 came from the floor |
+| 4. Deterministic severity floor | Canonical vulnerabilities are raised to CRITICAL in code when the wording and the code agree | An injection that talks the model down to HIGH still blocks, for those classes. All 4 CRITICALs in v2 came from the floor |
 
 The guardrail's measured rates are rough, because there were only 8 positive cases. 0/37 is still consistent with a true false-positive rate of up to about 8%.
 
 ## Engineering decisions and lessons
 
-- **Under-rated severity:** in v1 the agents found 5 of 6 blocking issues but rated them HIGH, so block recall was 17%. A deterministic floor (canonical classes such as SQL injection go to CRITICAL when the code shows the pattern) and ceiling (context-dependent classes such as SSRF are capped at HIGH) took it to 67%, then 83%, with no false blocks.
+- **Under-rated severity:** in v1 the agents found all 6 blocking issues but rated 5 of them HIGH, so block recall was 17%. A deterministic floor (canonical classes such as SQL injection go to CRITICAL when the code shows the pattern) and ceiling (context-dependent classes such as SSRF are capped at HIGH) took it to 67%, then 83%. The ceiling was added after a subset run falsely blocked an SSRF case (`sec-07`). Every full-suite run since has had 0 false blocks.
 - **Guessed line numbers:** agents number lines in the fragment they see, so 37 of 157 findings in v1 sat more than 3 lines from their own snippet. The pipeline now re-anchors each finding to its quoted snippet (88 of 144 moved in v2), and strict and snippet-based scoring now agree.
 - **Chunker crash:** the "is top-level" check walked the whole AST and crashed on a lambda or conditional expression, whose `body` isn't a list. That failed the whole reindex of any repo containing one. It now checks identity against the module body ([PR #13](https://github.com/aakash1514/code-review-agent/pull/13)).
 - **Titan quota:** the 60/min Titan quota can't be raised, and retries alone gave up halfway through a reindex. Adaptive retries plus client-side pacing at 50/min now finish this repo's 668 chunks in about 14 min.
