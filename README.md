@@ -276,6 +276,14 @@ Compose reads `.env` for app settings, takes short-lived AWS keys from `.env.aws
 docker compose exec app python -c "from pipeline.reindexer import rebuild_index_for_repo as r; from tools.github_tools import get_installation_token as t; print(r('owner/name', 'main', t()))"
 ```
 
+## MCP server
+
+`python -m mcp_server` serves the same pipeline to Claude Code, Claude Desktop and Cursor over stdio, through seven read-only tools. `search_code` searches the indexed code. `get_function`, `get_callers` and `get_callees` walk the call graph, built from a local clone. `get_pr_review` and `list_reviewed_prs` show what the bot said on GitHub. `review_patch` runs the four agents and the merge gate on one file's diff before you push, for about $0.002 per file on Bedrock gpt-oss.
+
+It needs only Qdrant Cloud, Bedrock, the GitHub App token and a local clone, not the AWS deployment. Setup, registration and limits: [docs/MCP.md](docs/MCP.md).
+
+<!-- SCREENSHOT: mcp-claude-code.png (Claude Code calling get_callers and review_patch) -->
+
 ## API
 
 | Method | Route | Purpose | Login required |
@@ -311,7 +319,7 @@ The main limitations are below. The full list, with when each should be fixed, i
 
 **Roadmap**
 
-- [ ] MCP server
+- [x] MCP server ([docs/MCP.md](docs/MCP.md))
 - [ ] Terraform for the whole AWS stack
 - [ ] SQS between the webhook and the worker. With 0% minimum healthy, the old task stops before the new one starts, and webhooks that arrive in that gap are lost
 - [ ] Multi-installation support (more than one GitHub App installation)
