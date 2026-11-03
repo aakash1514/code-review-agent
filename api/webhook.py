@@ -20,7 +20,7 @@ from tools.model_client import count_llm_calls
 from tools.tracing import traceable
 from pipeline.synthesizer import build_review_report, synthesize_markdown
 from pipeline.hitl_gate import evaluate_hitl_gate, DEFAULT_STATUS_CONTEXT
-from pipeline.guardrail import drop_files_from_diff, guardrail_enabled, prompt_injection_finding, screen_patch
+from pipeline.guardrail import drop_files_from_diff, guardrail_enabled, quarantine_report, screen_patch
 from tools.github_tools import get_installation_token, get_pr_diff, get_pr_files, post_pr_review, set_commit_status
 from tools.code_tools import extract_functions, strip_diff_to_source
 from rag.knowledge_graph import KnowledgeGraph, kg_path_for_repo
@@ -331,8 +331,7 @@ async def _run_review_pipeline(repo: str, pr_number: int, commit_sha: str) -> di
                 screen = await asyncio.to_thread(screen_patch, changed_file, patch)
                 if screen.blocked:
                     quarantined.append(changed_file)
-                    report = AgentReport(agent_name="guardrail", summary=f"quarantined: {screen.detail}",
-                                         findings=[prompt_injection_finding(changed_file, patch, screen.detail)])
+                    report = quarantine_report(changed_file, patch, screen.detail)
                     all_agent_reports.append(report)
                     await _on_agent_complete(report)
                     print(f"[webhook] guardrail quarantined {changed_file}: {screen.detail}")

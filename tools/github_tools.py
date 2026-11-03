@@ -193,6 +193,62 @@ def get_pr(repo: str, pr_number: int, token: str | None = None) -> dict:
     resp.raise_for_status()
     return resp.json()
 
+def get_app() -> dict:
+    """The GitHub App itself (GET /app, signed with the App JWT): its slug
+    names the bot account, "<slug>[bot]", that posts the review comments."""
+    resp = requests.get(
+        f"{GITHUB_API_BASE}/app",
+        headers={"Authorization": f"Bearer {generate_jwt()}", "Accept": "application/vnd.github+json"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def list_issue_comments(repo: str, number: int, token: str | None = None, max_pages: int = 10) -> list[dict]:
+    """Top-level comments on an issue or PR, oldest first (where
+    post_pr_review posts). Stops after max_pages pages of 100."""
+    comments: list[dict] = []
+    for page in range(1, max_pages + 1):
+        resp = requests.get(
+            f"{GITHUB_API_BASE}/repos/{repo}/issues/{number}/comments",
+            headers=_auth_headers(token),
+            params={"per_page": 100, "page": page},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        batch = resp.json()
+        comments.extend(batch)
+        if len(batch) < 100:
+            break
+    return comments
+
+
+def get_combined_status(repo: str, ref: str, token: str | None = None) -> dict:
+    """The combined commit status for ref: its "statuses" list holds the
+    latest status per context (e.g. ai-code-review, set by set_commit_status)."""
+    resp = requests.get(
+        f"{GITHUB_API_BASE}/repos/{repo}/commits/{ref}/status",
+        headers=_auth_headers(token),
+        params={"per_page": 100},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def list_pulls(repo: str, state: str = "all", limit: int = 10, token: str | None = None) -> list[dict]:
+    """The repo's most recently updated PRs (one page of at most 100)."""
+    resp = requests.get(
+        f"{GITHUB_API_BASE}/repos/{repo}/pulls",
+        headers=_auth_headers(token),
+        params={"state": state, "sort": "updated", "direction": "desc", "per_page": max(1, min(limit, 100))},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def get_repo_tree(repo: str, ref: str, token: str | None = None) -> list[dict]:
     """
     Recursive file listing at a given ref (branch name or commit SHA), via
