@@ -3,6 +3,9 @@
 #   pip install -r requirements-local-embed.txt -r requirements-dev.txt
 #   python -m pytest
 
+# The MCP server and its tests (tests/test_mcp_server.py).
+-r requirements-mcp.txt
+
 # Tests
 pytest==9.1.1
 # FastAPI's TestClient is built on httpx.
