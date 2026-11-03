@@ -10,6 +10,7 @@ api/         webhook server, origin-verify middleware, WebSocket manager, dashbo
 pipeline/    file filter, guardrail screen, parallel runner, synthesizer, HITL gate, job store, re-indexer
 rag/         AST chunker, embeddings, Qdrant indexer, retriever, knowledge graph
 tools/       GitHub client, code helpers, LLM client (Bedrock + Groq), rate limiter, prompt boundaries, logs/metrics, tracing
+mcp_server/  local stdio MCP server: read-only review tools for editors (docs/MCP.md)
 models/      Pydantic models for findings and reports
 evals/       golden cases, harness, scoring, CI gate thresholds
 scripts/     index_repo.py: one-off indexing of a repository

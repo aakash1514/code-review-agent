@@ -21,7 +21,7 @@ import threading
 from dataclasses import dataclass
 
 from config import settings
-from models.findings import CodeLocation, Finding, FindingCategory, Severity
+from models.findings import AgentReport, CodeLocation, Finding, FindingCategory, Severity
 from rag.retriever import short_error
 from tools.logs import log_event
 from tools.tracing import traceable
@@ -196,6 +196,13 @@ def prompt_injection_finding(changed_file: str, patch: str, detail: str | None) 
         suggestion="Read the change by hand. Remove any text addressed to the reviewer, then push again.",
         confidence=confidence,
     )
+
+
+def quarantine_report(changed_file: str, patch: str, detail: str | None) -> AgentReport:
+    """The guardrail's report for a quarantined file, in place of the agents':
+    its one CRITICAL finding blocks the merge."""
+    return AgentReport(agent_name="guardrail", summary=f"quarantined: {detail}",
+                       findings=[prompt_injection_finding(changed_file, patch, detail)])
 
 
 def drop_files_from_diff(diff: str, files: set[str] | list[str]) -> str:

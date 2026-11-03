@@ -107,6 +107,17 @@ class CodebaseIndexer:
         repo A can never return repo B's code even though they now share one
         physical Qdrant collection.
         """
+        return [payload for payload, _score in self.search_scored(query_text, repo, limit, file_filter)]
+
+    def search_scored(
+        self,
+        query_text: str,
+        repo: str,
+        limit: int = 5,
+        file_filter: str | None = None,
+    ) -> list[tuple[dict, float | None]]:
+        """search(), with each payload's similarity score (cosine; higher is
+        closer), best first."""
         vector = self._embed([query_text])[0]
 
         must_conditions = [FieldCondition(key="repo", match=MatchValue(value=repo))]
@@ -120,7 +131,7 @@ class CodebaseIndexer:
             limit=limit,
             query_filter=query_filter,
         )
-        return [point.payload for point in results.points]
+        return [(point.payload, getattr(point, "score", None)) for point in results.points]
 
     def delete_repo(self, repo: str) -> None:
         """

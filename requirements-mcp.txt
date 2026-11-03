@@ -1,0 +1,11 @@
+# MCP server (mcp_server/, `python -m mcp_server`): the review tools for
+# Claude Code, Claude Desktop and Cursor over stdio. Laptop only, not in the
+# Docker image. Installs the core runtime too:
+#   pip install -r requirements-mcp.txt
+#
+# mcp 2.x: FastMCP is now mcp.server.mcpserver.MCPServer. Its own
+# dependencies (anyio, starlette, sse-starlette, jsonschema, ...) resolve
+# against the pins in requirements.txt with no conflicts (pip check).
+-r requirements.txt
+
+mcp==2.3.0
