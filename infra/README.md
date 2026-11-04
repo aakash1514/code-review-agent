@@ -70,11 +70,13 @@ These four exist before the first apply, and a teardown of the stack keeps them.
 
 Run every command from `infra/`, with `AWS_PROFILE` set to the admin profile.
 
-**0. Before tearing down the Console stack**, save the current secret values. Terraform never has them:
+**0. Before tearing down the Console stack**, save the current secret values. Terraform never has them. The file holds live secrets, so it goes in a temp folder outside the repo, never inside the working tree:
 
 ```bash
+SECRETS_DIR="${TEMP:-${TMPDIR:-/tmp}}/cra-secrets"
+mkdir -p "$SECRETS_DIR"
 aws secretsmanager get-secret-value --secret-id code-review-agent/prod \
-  --query SecretString --output text > prod-secret.json   # keep it out of git; delete it after step 3
+  --query SecretString --output text > "$SECRETS_DIR/prod-secret.json"   # deleted at the end of step 3
 ```
 
 When you delete the Console's secret, use `--force-delete-without-recovery`. Otherwise the name `code-review-agent/prod` stays locked for 7–30 days, and the apply fails.
@@ -88,7 +90,7 @@ terraform apply -var-file=terraform.tfvars -var desired_count=0
 
 **2. Confirm the SNS subscription.** AWS emails `alert_email` a confirmation link. The alarms don't email anyone until you click it.
 
-**3. Put the secret values.** `prod-secret.json` is one JSON object with these six keys. `ORIGIN_VERIFY_SECRET` isn't one of them: it now lives in `code-review-agent/origin-verify`, and Terraform sets it. If the saved file still has that key, leaving it in does no harm.
+**3. Put the secret values.** `$SECRETS_DIR/prod-secret.json` is one JSON object with these six keys. `ORIGIN_VERIFY_SECRET` isn't one of them: it now lives in `code-review-agent/origin-verify`, and Terraform sets it. If the saved file still has that key, leaving it in does no harm.
 
 ```json
 {
@@ -103,8 +105,9 @@ terraform apply -var-file=terraform.tfvars -var desired_count=0
 
 ```bash
 aws secretsmanager put-secret-value --secret-id code-review-agent/prod \
-  --secret-string file://prod-secret.json
-rm prod-secret.json
+  --secret-string "file://$SECRETS_DIR/prod-secret.json"
+rm -f "$SECRETS_DIR/prod-secret.json"
+rmdir "$SECRETS_DIR"
 ```
 
 A missing key stops the task from starting (`ResourceInitializationError`), so all six must be present.
