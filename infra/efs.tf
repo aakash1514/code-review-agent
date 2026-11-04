@@ -1,0 +1,96 @@
+# /data in the container: the SQLite review history and knowledge_graph_*.json.
+# No backups: destroying the stack deletes this data (see README.md).
+
+resource "aws_efs_file_system" "data" {
+  creation_token   = "cra-efs"
+  encrypted        = true # AWS-managed key (aws/elasticfilesystem)
+  performance_mode = "generalPurpose"
+  throughput_mode  = "elastic"
+
+  tags = { Name = "cra-efs" }
+}
+
+resource "aws_efs_backup_policy" "data" {
+  file_system_id = aws_efs_file_system.data.id
+
+  backup_policy {
+    status = "DISABLED"
+  }
+}
+
+resource "aws_efs_mount_target" "data" {
+  for_each = aws_subnet.public
+
+  file_system_id  = aws_efs_file_system.data.id
+  subnet_id       = each.value.id
+  security_groups = [aws_security_group.efs.id]
+}
+
+# The task mounts through this access point, so it sees /data as its root and
+# writes as uid/gid 1000 (the image's non-root "app" user).
+resource "aws_efs_access_point" "data" {
+  file_system_id = aws_efs_file_system.data.id
+
+  posix_user {
+    uid = 1000
+    gid = 1000
+  }
+
+  root_directory {
+    path = "/data"
+
+    creation_info {
+      owner_uid   = 1000
+      owner_gid   = 1000
+      permissions = "0755"
+    }
+  }
+
+  tags = { Name = "cra-data-ap" }
+}
+
+# Only the task role may mount, only read-write (no root access), and only
+# through cra-data-ap. That's what the task definition does: IAM auth on, the
+# access point set, so the mount request carries the task role and the AP ARN.
+# The Deny refuses any connection without TLS.
+resource "aws_efs_file_system_policy" "data" {
+  file_system_id = aws_efs_file_system.data.id
+  policy         = data.aws_iam_policy_document.efs.json
+}
+
+data "aws_iam_policy_document" "efs" {
+  statement {
+    sid    = "TaskRoleViaAccessPoint"
+    effect = "Allow"
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.task.arn]
+    }
+    actions = [
+      "elasticfilesystem:ClientMount",
+      "elasticfilesystem:ClientWrite",
+    ]
+    resources = [aws_efs_file_system.data.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "elasticfilesystem:AccessPointArn"
+      values   = [aws_efs_access_point.data.arn]
+    }
+  }
+
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+    actions   = ["*"]
+    resources = [aws_efs_file_system.data.arn]
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
