@@ -18,8 +18,8 @@ flowchart LR
 | File | What it builds |
 |---|---|
 | `network.tf` | VPC `cra-vpc` 10.0.0.0/16, two public subnets (1a, 1b), IGW, public route table. No NAT, no endpoints |
-| `security_groups.tf` | `cra-alb-sg` (80 from CloudFront's origin-facing prefix list), `cra-task-sg` (8000 from the ALB), `cra-efs-sg` (2049 from the task) |
-| `efs.tf` | `cra-efs`: encrypted, elastic throughput, no backups, a TLS-only policy, a mount target per subnet, access point `cra-data-ap` |
+| `security_groups.tf` | `cra-alb-sg` (80 from CloudFront's origin-facing prefix list; egress only 8000 to the task), `cra-task-sg` (8000 from the ALB; egress open), `cra-efs-sg` (2049 from the task; no egress) |
+| `efs.tf` | `cra-efs`: encrypted, elastic throughput, no backups, a policy that admits only the task role through the access point and only over TLS, a mount target per subnet, access point `cra-data-ap` |
 | `ecr.tf` | `code-review-agent`: immutable tags, scan on push, keeps the last 10 images |
 | `secrets.tf` | `code-review-agent/prod` (container only) and `code-review-agent/origin-verify` (generated) |
 | `iam.tf` | `cra-ecs-execution-role` and `cra-ecs-task-role` (least privilege) |
@@ -192,3 +192,7 @@ The GitHub variables then point at nothing until the next apply.
 | ALB origin SSL protocols | SSLv3, TLSv1, TLSv1.1, TLSv1.2 | TLSv1.2 | Required field, unused with `http-only` |
 | CloudFront origin IDs, OAC name | Console-generated | `alb`, `s3-dashboard`, `cra-dashboard-oac` | Labels only |
 | Tags | `Project` | `Project`, `ManagedBy = terraform` | `default_tags` |
+| EFS file-system policy | Wizard default: any principal may `ClientRootAccess`, `ClientWrite` and `ClientMount` through a mount target; Deny without TLS | Only `cra-ecs-task-role` may `ClientMount` and `ClientWrite`, only through `cra-data-ap`; same Deny without TLS | Least privilege. No root access, because the access point maps everything to uid 1000 |
+| `cra-alb-sg` egress | All traffic to `0.0.0.0/0` | TCP 8000 to `cra-task-sg` only | The ALB only forwards to the task and health-checks it |
+| `cra-efs-sg` egress | All traffic to `0.0.0.0/0` | None | Mount targets never open connections; replies to the task's NFS traffic are allowed statefully |
+| `cra-task-sg` egress | All traffic | Unchanged: all traffic | No NAT or endpoints. It reaches AWS APIs, GitHub, Groq, LangSmith and Qdrant Cloud, which uses a non-443 port |

@@ -49,8 +49,10 @@ resource "aws_efs_access_point" "data" {
   tags = { Name = "cra-data-ap" }
 }
 
-# Same two statements as the Console's policy wizard: mount only through a
-# mount target, and refuse any connection without TLS.
+# Only the task role may mount, only read-write (no root access), and only
+# through cra-data-ap. That's what the task definition does: IAM auth on, the
+# access point set, so the mount request carries the task role and the AP ARN.
+# The Deny refuses any connection without TLS.
 resource "aws_efs_file_system_policy" "data" {
   file_system_id = aws_efs_file_system.data.id
   policy         = data.aws_iam_policy_document.efs.json
@@ -58,25 +60,26 @@ resource "aws_efs_file_system_policy" "data" {
 
 data "aws_iam_policy_document" "efs" {
   statement {
+    sid    = "TaskRoleViaAccessPoint"
     effect = "Allow"
     principals {
       type        = "AWS"
-      identifiers = ["*"]
+      identifiers = [aws_iam_role.task.arn]
     }
     actions = [
-      "elasticfilesystem:ClientRootAccess",
-      "elasticfilesystem:ClientWrite",
       "elasticfilesystem:ClientMount",
+      "elasticfilesystem:ClientWrite",
     ]
     resources = [aws_efs_file_system.data.arn]
     condition {
-      test     = "Bool"
-      variable = "elasticfilesystem:AccessedViaMountTarget"
-      values   = ["true"]
+      test     = "StringEquals"
+      variable = "elasticfilesystem:AccessPointArn"
+      values   = [aws_efs_access_point.data.arn]
     }
   }
 
   statement {
+    sid    = "DenyInsecureTransport"
     effect = "Deny"
     principals {
       type        = "AWS"

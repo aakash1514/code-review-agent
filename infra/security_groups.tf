@@ -56,9 +56,10 @@ resource "aws_vpc_security_group_ingress_rule" "efs_from_task" {
   referenced_security_group_id = aws_security_group.task.id
 }
 
-# ---- egress: all open, as in the Console stack ----------------------------
+# ---- egress ---------------------------------------------------------------
+# cra-efs-sg has none: mount targets only answer, never open connections.
 
-#trivy:ignore:AVD-AWS-0104 The task calls Bedrock, ECR, Secrets Manager, GitHub, Qdrant, Groq and LangSmith over the internet (no NAT, no endpoints); their IPs aren't fixed
+#trivy:ignore:AVD-AWS-0104 The task calls Bedrock, ECR, Secrets Manager, GitHub, Qdrant, Groq and LangSmith over the internet (no NAT, no endpoints); their IPs aren't fixed, and Qdrant Cloud uses a non-443 port
 resource "aws_vpc_security_group_egress_rule" "task_all" {
   security_group_id = aws_security_group.task.id
   description       = "All outbound (AWS APIs and SaaS over the IGW)"
@@ -66,18 +67,11 @@ resource "aws_vpc_security_group_egress_rule" "task_all" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
-#trivy:ignore:AVD-AWS-0104 Same egress as the live Console SG; the ALB only forwards to tasks in this VPC
-resource "aws_vpc_security_group_egress_rule" "alb_all" {
-  security_group_id = aws_security_group.alb.id
-  description       = "All outbound (forwards to the task)"
-  ip_protocol       = "-1"
-  cidr_ipv4         = "0.0.0.0/0"
-}
-
-#trivy:ignore:AVD-AWS-0104 Same egress as the live Console SG; EFS never opens outbound connections
-resource "aws_vpc_security_group_egress_rule" "efs_all" {
-  security_group_id = aws_security_group.efs.id
-  description       = "All outbound (unused by EFS)"
-  ip_protocol       = "-1"
-  cidr_ipv4         = "0.0.0.0/0"
+resource "aws_vpc_security_group_egress_rule" "alb_to_task" {
+  security_group_id            = aws_security_group.alb.id
+  description                  = "Forward and health-check the task on the app port"
+  ip_protocol                  = "tcp"
+  from_port                    = 8000
+  to_port                      = 8000
+  referenced_security_group_id = aws_security_group.task.id
 }
