@@ -12,13 +12,13 @@ Four specialist LLM agents review every GitHub pull request in parallel, with co
 - **About $0.0017 per reviewed file, p50 latency 5.5 s** (p95 10.9 s) on Amazon Bedrock gpt-oss. That's 3.5x faster than the same models on Groq, with no daily token cap.
 - **Prompt-injection screen:** the Bedrock guardrail detected **5 of 8** injection cases with **0 false positives in 37** non-injection cases. Behind it, the model ignored injected text in all three cases the screen missed.
 - **An LLM eval gate in CI:** PRs that touch review logic run an 8-case smoke eval on Bedrock and must pass five thresholds before they can merge.
-- **Runs on AWS:** ECS Fargate behind CloudFront, deployed through GitHub OIDC with no long-lived AWS keys. The ECS circuit breaker rolled back a deliberately broken deploy without help.
+- **Runs on AWS, defined in Terraform:** ECS Fargate behind CloudFront, built from [infra/](infra/) and deployed through GitHub OIDC with no long-lived AWS keys. The ECS circuit breaker rolled back a deliberately broken deploy without help.
 - **It reviews its own PRs:** `ai-code-review` is one of the 5 required checks on this repo.
 - **556 unit tests**, with outbound network blocked during the run.
 
 ## Demo
 
-**Live:** <https://d3b0ayfj6614ya.cloudfront.net>. You sign in with GitHub, and the dashboard shows a repo only to users with read access to it on GitHub.
+**Live:** <https://d1ngkk9hkqym35.cloudfront.net>. You sign in with GitHub, and the dashboard shows a repo only to users with read access to it on GitHub.
 
 <!-- DEMO_VIDEO_URL: add the YouTube link here -->
 
@@ -43,7 +43,7 @@ Stage-by-stage detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Architecture
 
-Everything runs in AWS ap-south-1.
+Everything runs in AWS ap-south-1, and the whole stack is defined in Terraform in [infra/](infra/) (see [Infrastructure as code](#infrastructure-as-code)).
 
 ```mermaid
 flowchart LR
@@ -90,6 +90,17 @@ flowchart LR
 | State | SQLite (jobs, results, overrides) and knowledge-graph JSON on EFS. One task, because WebSockets and SQLite live in one process |
 | Dashboard | React + Vite, Monaco diff viewer, React Flow call graph, served from S3 behind the same CloudFront distribution |
 | Container | Python 3.13 slim, multi-stage, non-root, no pip at run time, configured only through environment variables |
+
+### Infrastructure as code
+
+- **63 resources in one root module** ([infra/](infra/)), plain `aws_*` resources with one file per concern (network, ALB, ECS, EFS, CloudFront, IAM, observability and so on).
+- **State** lives in S3 with native locking (`use_lockfile`, no DynamoDB table).
+- **Secrets are created as empty containers.** Their values are put by hand and never appear in code or state. The one exception is the generated `X-Origin-Verify` value: CloudFront's config has to contain it, so Terraform holds it either way.
+- **The first apply is phased:** `desired_count=0`, then the secret values, then `desired_count=1`, then `deploy-app` and `deploy-web`.
+- **No drift after CI deploys:** the service ignores `task_definition`, so `terraform plan` shows "No changes" after `deploy-app` registers a new revision.
+- **CI checks it:** `terraform fmt`, `validate` and a `trivy config` scan run on every PR. Runbook, outside-Terraform resources and the rebuild log: [infra/README.md](infra/README.md).
+
+<!-- SCREENSHOT: terraform-no-changes.png (terraform plan after a CI deploy: No changes) -->
 
 ## Results
 
@@ -221,6 +232,7 @@ Over the last 30 days the log has 22 finished reviews, 20 of them complete. The 
 - **No long-lived keys:** GitHub Actions reaches AWS only through OIDC, and runtime secrets live in Secrets Manager. The dashboard never stores a user's GitHub token.
 - **Supply chain:** Trivy fails the build on fixable HIGH/CRITICAL vulnerabilities. The image runs as a non-root user (uid 1000), has pip removed, and copies in only an explicit list of directories. The CI and deploy workflows pin every action to a commit SHA.
 - **Prompt injection:** the four layers in [Results](#prompt-injection-defence-layers).
+- **Secret-leak audit (4 Nov 2026):** no leaked values. Both repos are public, so gitleaks, trufflehog and an exact-value check for every real secret were run over the full history and the public surfaces (PR refs, comments, variables, artifacts, workflow logs, the live dashboard bundle). The only hits were fake keys in tests and evals.
 
 <!-- SCREENSHOT: guardrail-quarantine.png (prompt-injection PR blocked) -->
 
@@ -320,7 +332,7 @@ The main limitations are below. The full list, with when each should be fixed, i
 **Roadmap**
 
 - [x] MCP server ([docs/MCP.md](docs/MCP.md))
-- [ ] Terraform for the whole AWS stack
+- [x] Terraform for the whole AWS stack ([infra/](infra/))
 - [ ] SQS between the webhook and the worker. With 0% minimum healthy, the old task stops before the new one starts, and webhooks that arrive in that gap are lost
 - [ ] Multi-installation support (more than one GitHub App installation)
 
