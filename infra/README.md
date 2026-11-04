@@ -183,6 +183,17 @@ The stack is destroyable on purpose, and destroying it deletes data:
 
 The GitHub variables then point at nothing until the next apply.
 
+## Rebuild log
+
+**4 Nov 2026: the Console stack was replaced by this module.**
+
+- The Console-built stack was torn down and rebuilt from `infra/`. The first apply created 63 resources with no retries. The rollout followed the runbook: `desired_count=0`, put the secret values, apply with `desired_count=1`, then `deploy-app` and `deploy-web`.
+- After CI's deploy, `terraform plan` reported **"No changes"**, so Terraform and CI coexist without drift (the service ignores `task_definition`).
+- New live URL `https://d1ngkk9hkqym35.cloudfront.net` (distribution `E1ZV2OTPU3FYCT`), and the service is now `cra-service`.
+- The GitHub OIDC provider, `cra-gha-evals`, the guardrail `odz2vmufjpud` and the state bucket stayed outside Terraform and survived the teardown.
+- Hardened compared with the Console stack: the EFS policy admits only the task role through the access point, ALB egress is TCP 8000 to the task SG only, and the EFS SG has no egress ([differences](#differences-from-the-console-stack)).
+- The new EFS started empty, so the review history was reset ([KNOWN_ISSUES #21](../docs/KNOWN_ISSUES.md)). The knowledge graph rebuilds on the next push.
+
 ## Differences from the Console stack
 
 | Setting | Console | Terraform | Why |
