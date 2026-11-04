@@ -42,8 +42,11 @@ temp/
 
 github-app-private-key.pem
 *.pem
-review_agent.db
 knowledge_graph*.json
+# Any local database file (covers review_agent.db)
+*.db
+*.sqlite
+*.sqlite3
 # Runtime data (SQLite DB, knowledge graphs): DATA_DIR, ./data by default
 data/
 interview-prep.html
@@ -58,6 +61,16 @@ review_agent.db-wal
 
 # Eval harness outputs (python -m evals.run_evals run)
 evals/runs/
+
+# Audit evidence (CloudTrail excerpts, screenshots); local only
+docs/evidence/
+
+# Data exports from the stack (raw review JSON)
+cra-export/
+
+# Files holding live secret values (e.g. the runbook's prod-secret.json)
+prod-secret*.json
+*secret*.json
 
 # Terraform (infra/): local state, plans and real variable values
 .terraform/
