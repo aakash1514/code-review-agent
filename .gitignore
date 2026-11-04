@@ -58,3 +58,12 @@ review_agent.db-wal
 
 # Eval harness outputs (python -m evals.run_evals run)
 evals/runs/
+
+# Terraform (infra/): local state, plans and real variable values
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+*.tfplan

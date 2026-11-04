@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. None of these is a
+# secret, but they're account-specific, so they stay out of git. Secret values
+# go into Secrets Manager with the CLI (README.md), never into this file.
+
+alert_email = "you@example.com"
+
+# GitHub App settings page -> "About": App ID and Client ID.
+github_app_id          = "1234567"
+github_oauth_client_id = "Iv23liXXXXXXXXXXXXXX"
+# github.com/settings/installations/<this number>
+github_installation_id = "12345678"
+
+# Qdrant Cloud console -> cluster -> endpoint (the API key goes into Secrets Manager).
+qdrant_url = "https://xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.eu-west-2-0.aws.cloud.qdrant.io"
+
+# First apply only (README.md: first-apply runbook):
+# desired_count = 0
