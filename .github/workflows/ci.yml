@@ -83,6 +83,42 @@ jobs:
           exit-code: "1"
           format: table
 
+  # Static checks only: no backend, no AWS credentials, no plan.
+  infra:
+    name: Terraform fmt + validate + Trivy config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.16.6"
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      # -backend=false: providers only (checked against .terraform.lock.hcl), no state access.
+      - name: terraform init + validate
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      # Gate: HIGH/CRITICAL misconfigurations fail. Deliberate choices carry a
+      # #trivy:ignore comment with the reason, next to the resource.
+      - name: Trivy config scan (HIGH/CRITICAL = fail)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+
   # Smoke eval (8 golden cases, Bedrock gpt-oss, ~$0.01, 1-2 min) gated by
   # evals/thresholds.yaml. Always runs on PRs so it can be a required check;
   # PRs that touch no review-quality path pass in seconds. See evals/README.md.
