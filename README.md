@@ -14,17 +14,23 @@ Four specialist LLM agents review every GitHub pull request in parallel, with co
 - **An LLM eval gate in CI:** PRs that touch review logic run an 8-case smoke eval on Bedrock and must pass five thresholds before they can merge.
 - **Runs on AWS, defined in Terraform:** ECS Fargate behind CloudFront, built from [infra/](infra/) and deployed through GitHub OIDC with no long-lived AWS keys. The ECS circuit breaker rolled back a deliberately broken deploy without help.
 - **It reviews its own PRs:** `ai-code-review` is one of the 5 required checks on this repo.
-- **556 unit tests**, with outbound network blocked during the run.
+- **597 unit tests**, with outbound network blocked during the run.
 
 ## Demo
 
 **Live:** <https://d1ngkk9hkqym35.cloudfront.net>. You sign in with GitHub, and the dashboard shows a repo only to users with read access to it on GitHub.
 
-<!-- DEMO_VIDEO_URL: add the YouTube link here -->
+[![Demo video: Autonomous Code Review Agent](https://img.youtube.com/vi/gDpw28_ASEg/hqdefault.jpg)](https://youtu.be/gDpw28_ASEg)
 
-<!-- SCREENSHOT: pr-review-comment.png (agent PR comment + status check) -->
+*4-minute demo: a clean PR, a SQL injection, a prompt-injection quarantine, evals, architecture and MCP.*
 
-<!-- SCREENSHOT: dashboard.png (review dashboard with live progress) -->
+![The bot's PR comment and the failed ai-code-review check](docs/images/guardrail-quarantine-check.png)
+
+*The bot's comment and the failed `ai-code-review` check that blocks the merge.*
+
+![Review dashboard](docs/images/dashboard.png)
+
+*Review dashboard: findings by agent, code view, call graph and the human Approve/Block override. Captured on an earlier version of the stack.*
 
 ## How it works
 
@@ -41,9 +47,19 @@ The orchestration is custom async parallel code (`asyncio`) in [pipeline/runner.
 
 Stage-by-stage detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+![Review pipeline](docs/images/review-pipeline.png)
+
+*One review: webhook, file filter and guardrail screen, then RAG context, the four agents in parallel, post-processing, synthesis and the HITL gate.*
+
 ## Architecture
 
 Everything runs in AWS ap-south-1, and the whole stack is defined in Terraform in [infra/](infra/) (see [Infrastructure as code](#infrastructure-as-code)).
+
+![Architecture](docs/images/architecture.png)
+
+*Clients, the AWS stack (CloudFront, ALB, ECS Fargate, EFS, Bedrock, CloudWatch) and the external services.*
+
+Same diagram as Mermaid (editable):
 
 ```mermaid
 flowchart LR
@@ -86,10 +102,14 @@ flowchart LR
 |---|---|
 | LLM | Bedrock `openai.gpt-oss-120b-1:0` for security, architecture and synthesis; `openai.gpt-oss-20b-1:0` for tests and docs. Both in-region, with Groq as the fallback |
 | Embeddings | Bedrock Titan Text Embeddings V2 (512-d) into Qdrant Cloud, one collection per embedding model |
-| Quotas | Titan allows 60 requests/min (not adjustable), paced at 50/min, so a full reindex of this repo (668 chunks) takes about 14 min. gpt-oss allows 100/min, paced at 90/min |
+| Quotas | Titan allows 60 requests/min (not adjustable), paced at 50/min, so a full reindex of this repo (931 chunks) takes about 20 min. gpt-oss allows 100/min, paced at 90/min |
 | State | SQLite (jobs, results, overrides) and knowledge-graph JSON on EFS. One task, because WebSockets and SQLite live in one process |
 | Dashboard | React + Vite, Monaco diff viewer, React Flow call graph, served from S3 behind the same CloudFront distribution |
 | Container | Python 3.13 slim, multi-stage, non-root, no pip at run time, configured only through environment variables |
+
+![CloudFront behaviors](docs/images/cloudfront-behaviors.png)
+
+*CloudFront path routing: `/api/*`, `/auth/*`, `/ws/*`, `/webhook` and `/healthz` go to the ALB; everything else goes to S3.*
 
 ### Infrastructure as code
 
@@ -100,7 +120,9 @@ flowchart LR
 - **No drift after CI deploys:** the service ignores `task_definition`, so `terraform plan` shows "No changes" after `deploy-app` registers a new revision.
 - **CI checks it:** `terraform fmt`, `validate` and a `trivy config` scan run on every PR. Runbook, outside-Terraform resources and the rebuild log: [infra/README.md](infra/README.md).
 
-<!-- SCREENSHOT: terraform-no-changes.png (terraform plan after a CI deploy: No changes) -->
+![terraform plan: No changes](docs/images/terraform-no-changes.png)
+
+*`terraform plan` after a CI deploy reports no changes.*
 
 ## Results
 
@@ -117,6 +139,19 @@ All numbers come from [evals/RESULTS.md](evals/RESULTS.md). Each run is a **sing
 | Block precision | 100% (1/1) | 100% (4/4) | 100% (5/5) |
 | **Block recall** | **17% (1/6)** | **67% (4/6)** | **83% (5/6)** |
 | False blocks | 0 | 0 | 0 |
+
+<details>
+<summary>What v1 looked like (before the severity floor)</summary>
+
+![v1 review, part 1](docs/images/v1-review-1.png)
+
+![v1 review, part 2](docs/images/v1-review-2.png)
+
+![v1 review, part 3](docs/images/v1-review-3.png)
+
+In v1 the agents found the SQL injection but rated it HIGH, so the PR passed the gate, just as the eval's `sec-01` SQL-injection case was found but not blocked in full-r1. The deterministic severity floor now raises canonical vulnerabilities such as SQL injection to CRITICAL when the code shows the pattern; it has blocked `sec-01` since v2.
+
+</details>
 
 In v1 the agents found the issue in all 5 missed blocks but rated it HIGH. Detection was fine; the fix was severity policy. `arch-05` is missed in every run: in v2 its agent failed under rate limits, and in v3b it came back as a HIGH architecture finding, which doesn't block. It also gets no call-graph context ([KNOWN_ISSUES #8, #13](docs/KNOWN_ISSUES.md)).
 
@@ -148,7 +183,7 @@ The guardrail's measured rates are rough, because there were only 8 positive cas
 - **Under-rated severity:** in v1 the agents found all 6 blocking issues but rated 5 of them HIGH, so block recall was 17%. A deterministic floor (canonical classes such as SQL injection go to CRITICAL when the code shows the pattern) and ceiling (context-dependent classes such as SSRF are capped at HIGH) took it to 67%, then 83%. The ceiling was added after a subset run falsely blocked an SSRF case (`sec-07`). Every full-suite run since has had 0 false blocks.
 - **Guessed line numbers:** agents number lines in the fragment they see, so 37 of 157 findings in v1 sat more than 3 lines from their own snippet. The pipeline now re-anchors each finding to its quoted snippet (88 of 144 moved in v2), and strict and snippet-based scoring now agree.
 - **Chunker crash:** the "is top-level" check walked the whole AST and crashed on a lambda or conditional expression, whose `body` isn't a list. That failed the whole reindex of any repo containing one. It now checks identity against the module body ([PR #13](https://github.com/aakash1514/code-review-agent/pull/13)).
-- **Titan quota:** the 60/min Titan quota can't be raised, and retries alone gave up halfway through a reindex. Adaptive retries plus client-side pacing at 50/min now finish this repo's 668 chunks in about 14 min.
+- **Titan quota:** the 60/min Titan quota can't be raised, and retries alone gave up halfway through a reindex. Adaptive retries plus client-side pacing at 50/min now finish this repo's 931 chunks in about 20 min.
 - **Groq daily quota:** a tokens-per-day 429 came with `retry-after: 435`, which stalled a review for over 7 minutes before it failed anyway. Bedrock became the primary provider, and the Groq fallback now fails fast on daily quotas while still waiting out per-minute limits ([KNOWN_ISSUES #19](docs/KNOWN_ISSUES.md)).
 - **A model that obeys injections:** on Nova 2 Lite, the security agent returned `[]` for an f-string SQL injection because a comment told it to. That kept production on gpt-oss, and it set a rule: run the `inj-*` cases before any model change.
 - **A guardrail false positive, handled by the human gate:** the guardrail quarantined this repo's own `tools/prompt_boundaries.py`, because its docstring describes the attack it defends against. A human read the file and overrode the block on the dashboard. The docstring stayed as it was, since rewording it to get past the screen would hide why the module exists ([KNOWN_ISSUES #17](docs/KNOWN_ISSUES.md)).
@@ -200,7 +235,9 @@ PRs that touch none of those paths pass in seconds. Fork PRs that touch them fai
 
 <!-- SCREENSHOT: eval-gate-summary.png (CI job summary) -->
 
-<!-- SCREENSHOT: ecs-rollback-events.png (circuit breaker rollback) -->
+![ECS deployment](docs/images/ecs-deployment.png)
+
+*ECS deployment with the circuit breaker monitoring the rollout (a successful deploy; the rollback test was PR #10 on the earlier stack).*
 
 ## Observability
 
@@ -208,9 +245,17 @@ PRs that touch none of those paths pass in seconds. Fork PRs that touch them fai
 - **Alarms and dashboards:** 7 alarms send email through SNS. There's also a CloudWatch dashboard, plus saved Logs Insights queries over the structured JSON logs, which carry the repo, PR and commit on each review.
 - **Tracing:** LangSmith records one trace per review, with each agent run and every LLM call under it, token counts included. It's off unless `LANGSMITH_TRACING=true`.
 
-<!-- SCREENSHOT: cloudwatch-dashboard.png -->
+![CloudWatch dashboard](docs/images/cloudwatch-dashboard.png)
 
-<!-- SCREENSHOT: langsmith-trace.png (review → agents → LLM calls) -->
+*CloudWatch dashboard: ALB requests and 5xx, healthy tasks, CPU and memory, and the latest reviews from the structured logs.*
+
+![CloudWatch alarms](docs/images/cloudwatch-alarms.png)
+
+*The 7 CloudWatch alarms, each emailing through SNS.*
+
+![LangSmith trace](docs/images/langsmith-trace.png)
+
+*One review in LangSmith: guardrail screens, then the four agents and each Bedrock gpt-oss call with token counts.*
 
 ### Early production data (N = 4)
 
@@ -234,7 +279,9 @@ Over the last 30 days the log has 22 finished reviews, 20 of them complete. The 
 - **Prompt injection:** the four layers in [Results](#prompt-injection-defence-layers).
 - **Secret-leak audit (4 Nov 2026):** no leaked values. Both repos are public, so gitleaks, trufflehog and an exact-value check for every real secret were run over the full history and the public surfaces (PR refs, comments, variables, artifacts, workflow logs, the live dashboard bundle). The only hits were fake keys in tests and evals.
 
-<!-- SCREENSHOT: guardrail-quarantine.png (prompt-injection PR blocked) -->
+![Guardrail quarantine on a PR](docs/images/guardrail-quarantine-pr.png)
+
+*A PR that hides instructions for the reviewer is caught by Bedrock Guardrails and quarantined for a human.*
 
 ## Running locally
 
@@ -294,7 +341,13 @@ docker compose exec app python -c "from pipeline.reindexer import rebuild_index_
 
 It needs only Qdrant Cloud, Bedrock, the GitHub App token and a local clone, not the AWS deployment. Setup, registration and limits: [docs/MCP.md](docs/MCP.md).
 
-<!-- SCREENSHOT: mcp-claude-code.png (Claude Code calling get_callers and review_patch) -->
+![Claude Code calling get_callers](docs/images/mcp-get-callers.png)
+
+*Claude Code calling `get_callers` through the MCP server.*
+
+![Claude Code calling review_patch](docs/images/mcp-review-patch.png)
+
+*`review_patch` on an f-string SQL query: CRITICAL, `would_block: true`.*
 
 ## API
 
