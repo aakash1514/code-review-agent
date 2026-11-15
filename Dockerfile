@@ -36,6 +36,13 @@ ENV PATH="/opt/venv/bin:$PATH" \
     EMBEDDING_PROVIDER=bedrock \
     AWS_REGION=ap-south-1
 
+# Debian ships security fixes before the python image is rebuilt with them, so
+# apply them here: Trivy fails the build on fixable base-image CVEs (e.g.
+# zlib1g). See docs/KNOWN_ISSUES.md #23.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # The base image's own pip goes too (same vendored-library findings); nothing
 # installs packages at run time.
 RUN python -m pip uninstall -y pip \
